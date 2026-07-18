@@ -120,7 +120,9 @@ def start_server() -> None:
         start_new_session=True,
     )
     write_pid(paths.pid_file(), proc.pid)
-    if wait_for_port(cfg.server.host, cfg.server.port, timeout=_STARTUP_TIMEOUT):
+    # A wildcard bind address is not connectable; probe loopback instead.
+    check_host = "127.0.0.1" if cfg.server.host in ("0.0.0.0", "::") else cfg.server.host
+    if wait_for_port(check_host, cfg.server.port, timeout=_STARTUP_TIMEOUT):
         return
     if not pid_alive(proc.pid):
         remove_pid(paths.pid_file())
