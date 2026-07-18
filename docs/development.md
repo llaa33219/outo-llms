@@ -142,7 +142,7 @@ class ExampleAdapter(EngineAdapter):
 
 ## Releases
 
-Releases are published to PyPI by GitHub Actions using **trusted publishing** (OIDC). No PyPI API token is stored anywhere; PyPI authenticates the repository directly. The workflow lives at `.github/workflows/release.yml` and runs when a GitHub release is published: it builds the sdist and wheel with Hatchling, then publishes them with `pypa/gh-action-pypi-publish` under an `id-token: write` permission.
+Releases are published to PyPI by GitHub Actions using **trusted publishing** (OIDC). No PyPI API token is stored anywhere; PyPI authenticates the repository directly. The workflow lives at `.github/workflows/release.yml` and runs when a `v*` tag is pushed: it builds the sdist and wheel with Hatchling, then publishes them with `pypa/gh-action-pypi-publish` under an `id-token: write` permission.
 
 One-time PyPI setup (maintainer): register a *pending publisher* at <https://pypi.org/manage/account/publishing/> with owner `llaa33219`, repository `outo-llms`, workflow name `release.yml`, and no environment. The first release then creates the PyPI project automatically.
 
@@ -151,8 +151,9 @@ Cutting a release:
 ```bash
 # 1. Bump the version in src/outo_llms/__init__.py and pyproject.toml (they must agree).
 # 2. Commit and push.
-# 3. Create the GitHub release - the workflow does the rest.
-gh release create v<version> --generate-notes
+# 3. Tag the release and push the tag - the workflow does the rest.
+git tag v<version>
+git push origin v<version>
 ```
 
 The wheel contains `src/outo_llms`. The sdist additionally bundles `docs/`, `README.md`, and `LICENSE`. To build distributions locally (e.g. to inspect them):
