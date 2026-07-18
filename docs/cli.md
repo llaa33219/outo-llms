@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.1.0`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.0`.
 
 ## `outo-llms setup`
 
@@ -8,20 +8,23 @@ The package installs one console script, `outo-llms`. Running it without a subco
 outo-llms setup [OPTIONS]
 ```
 
-Runs the setup wizard. It creates the configuration and data directories, writes `config.json`, initializes SQLite, creates an isolated engine virtual environment, installs that engine's requirements, optionally generates a self-signed certificate, optionally opens the server port in a supported Linux firewall, and starts the API server in the background.
+Runs the setup wizard. It creates the configuration and data directories, writes `config.json`, initializes SQLite, creates an isolated engine virtual environment, installs that engine's requirements, generates a self-signed certificate for the configured domain or IP, opens the server port in a supported Linux firewall, and starts the API server in the background.
 
 Options:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--engine`, `-e` | interactive choice, `llamacpp` when `--yes` is used | Engine to install: `llamacpp` or `vllm`. |
-| `--host` | `127.0.0.1` | Interface for the API server. |
-| `--port`, `-p` | `8611` | API server port. |
-| `--https` / `--no-https` | interactive choice, HTTPS disabled with `--yes` | Serve with a generated self-signed certificate. |
-| `--open-port` / `--no-open-port` | interactive choice, firewall change disabled with `--yes` | Open the server port in the system firewall when supported. |
+| `--engine`, `-e` | `llamacpp` (prompt or `--yes`) | Engine to install: `llamacpp` or `vllm`. |
+| `--host` | `0.0.0.0` | Interface for the API server. |
+| `--port`, `-p` | `443` | API server port. |
+| `--domain` | auto-detected primary IP, falling back to `localhost` | Domain or IP for the HTTPS certificate. Detected locally without sending any traffic. The certificate's SANs cover `localhost`, `127.0.0.1`, the chosen value, and, when a domain is given, the detected primary IP. Existing certificates are regenerated when the domain changes. |
+| `--https` / `--no-https` | enabled (prompt default yes, `--yes` accepts yes) | Serve with a generated self-signed certificate. |
+| `--open-port` / `--no-open-port` | enabled (prompt default yes, `--yes` accepts yes) | Open the server port in the system firewall when supported (Linux only). |
 | `--yes`, `-y` | `false` | Do not prompt. Accept setup defaults and keep announcing and logging each action. |
 
-Without `--yes`, setup asks for the engine when it is not supplied, asks whether to use HTTPS, asks whether to open the firewall port, and asks for confirmation of the displayed plan. If configuration already exists, it asks whether to reconfigure. With `--yes` and an existing configuration, setup does not reconfigure and exits while keeping the existing configuration.
+Without `--yes`, setup asks for the engine when it is not supplied, asks whether to use HTTPS (default yes), asks whether to open the firewall port (default yes), prompts for the certificate domain, and asks for confirmation of the displayed plan. If configuration already exists, it asks whether to reconfigure. With `--yes` and an existing configuration, setup does not reconfigure and exits while keeping the existing configuration.
+
+Privileged ports: when the chosen port is below `1024` on a POSIX system and outo-llms is not running as root, setup grants the Python interpreter permission to bind low ports with `sudo setcap cap_net_bind_service=+ep <python>`. The step is announced in the plan, confirmed unless `--yes` is set, and recorded in the action log. If the step fails or is declined, setup warns that the server may not bind the configured port and suggests picking a port above `1024`.
 
 Examples:
 
@@ -29,14 +32,17 @@ Examples:
 # Interactive setup
 outo-llms setup
 
-# Fresh, non-interactive local HTTP setup with llama.cpp
+# Fresh, non-interactive setup with the server-first defaults (llama.cpp, 0.0.0.0:443, HTTPS, firewall)
+outo-llms setup --engine llamacpp --yes
+
+# Non-interactive loopback setup that opts out of HTTPS and the firewall
 outo-llms setup --engine llamacpp --no-https --no-open-port --yes
 
-# Interactive setup on a chosen address and port
-outo-llms setup --host 0.0.0.0 --port 8611 --engine vllm
+# Interactive setup with a specific domain and engine
+outo-llms setup --host 0.0.0.0 --port 443 --domain api.example.com --engine vllm
 ```
 
-System effects include creating directories under the platformdirs config and data locations, writing configuration and database files, creating a venv, running pip inside that venv, and starting a detached server process. Every setup step is announced. The setup plan and action log show the paths and selected values.
+System effects include creating directories under the platformdirs config and data locations, writing configuration and database files, creating a venv, running pip inside that venv, generating certificates, running the Linux firewall tool (`ufw` or `firewalld`), running `sudo setcap` when binding a privileged port, and starting a detached server process. Every setup step is announced. The setup plan and action log show the paths, selected values, and the exact commands run.
 
 ## `outo-llms models`
 
@@ -212,7 +218,7 @@ outo-llms restart
 outo-llms status
 ```
 
-Shows server state, host, port, HTTPS setting, base URL, active engine state, and key paths including the configuration file, data directory, action log, and server log.
+Shows server state, host, port, HTTPS setting, domain, the formatted base URL, active engine state, and key paths including the configuration file, data directory, action log, and server log. HTTPS on port `443` is printed without the port suffix so the URL stays clean.
 
 ```bash
 outo-llms status

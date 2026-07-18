@@ -29,15 +29,15 @@ Confirm the installed version:
 outo-llms version
 ```
 
-The current package version is `0.1.0`.
+The current package version is `0.2.0`.
 
 ## Operating system notes
 
 Linux is the primary operational environment, especially when you want setup to configure a firewall. On Linux, setup can use `ufw` or `firewall-cmd` when the selected `--open-port` option is enabled. The exact firewall command is announced before it runs and requires consent unless setup uses `--yes`.
 
-Automatic firewall configuration is only supported on Linux. On other systems, setup explains that the server port must be opened manually if you need access from another machine. Firewall configuration is optional and is disabled by default.
+Automatic firewall configuration is only supported on Linux. On other systems, setup explains that the server port must be opened manually if you need access from another machine. Firewall configuration is offered by default (the prompt defaults to yes) and can be declined or skipped with `--no-open-port`.
 
-The server binds to `127.0.0.1` by default, so a local installation normally needs no firewall change. See [Security](security.md) before changing the host to `0.0.0.0`.
+The server binds to `0.0.0.0:443` with HTTPS by default, so the firewall prompt and a possible privileged-port `sudo setcap` step are part of the normal flow. For a loopback-only installation, pass `--host 127.0.0.1` (and choose a port above 1024, e.g. `--port 8611`). See [Security](security.md) for the implications of each binding.
 
 ## Hardware notes
 

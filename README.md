@@ -49,23 +49,30 @@ Prefer an isolated install? `pipx install outo-llms` works too.
 
 ## Quickstart
 
+`outo-llms setup` defaults to a public HTTPS deployment on port `443`:
+the API server binds `0.0.0.0:443`, a self-signed certificate covers the
+auto-detected server IP, and the firewall port is opened on the supported
+Linux toolchain. Substitute `<your-server-ip-or-domain>` with the address
+printed by `outo-llms status` (the example below uses the documentation
+placeholder `203.0.113.10`):
+
 ```bash
 outo-llms setup                              # interactive, fully explicit setup
-curl -s -X POST http://127.0.0.1:8611/v1/account/signup \
+curl -ks -X POST https://<your-server-ip-or-domain>/v1/account/signup \
   -H 'Content-Type: application/json' \
   -d '{"username": "me"}'                    # returns an api_key + default workspace
 outo-llms models add tinyllama               # register a Hugging Face model
-curl -s http://127.0.0.1:8611/v1/chat/completions \
+curl -ks https://<your-server-ip-or-domain>/v1/chat/completions \
   -H "Authorization: Bearer outo_sk_..." \
   -H 'Content-Type: application/json' \
   -d '{"model": "tinyllama", "messages": [{"role": "user", "content": "hi"}]}'
-curl -s http://127.0.0.1:8611/v1/usage \
+curl -ks https://<your-server-ip-or-domain>/v1/usage \
   -H "Authorization: Bearer outo_sk_..."    # per-workspace token accounting
 ```
 
-The setup wizard prints the exact base URL it configured (HTTP or HTTPS),
-along with the path to the action log, and writes a short summary you can
-copy into your shell history.
+`curl -k` is required because the certificate is self-signed. The setup
+wizard prints the exact base URL it configured, the path to the action
+log, and writes a short summary you can copy into your shell history.
 
 ## Commands
 
@@ -88,10 +95,11 @@ copy into your shell history.
 
 ## How it works
 
-The outo-llms server (`python -m outo_llms.server`) binds `127.0.0.1:8611`
-by default and exposes an OpenAI-compatible HTTP API. Engines are
-internal services that bind their own loopback ports (llama.cpp on 8612,
-vLLM on 8613); clients never reach them directly.
+The outo-llms server (`python -m outo_llms.server`) binds `0.0.0.0:443`
+with HTTPS by default and exposes an OpenAI-compatible API at
+`https://<your-server-ip-or-domain>/`. Engines are internal services that
+bind their own loopback ports (llama.cpp on 8612, vLLM on 8613); clients
+never reach them directly.
 
 When a request hits `POST /v1/chat/completions` or `POST /v1/completions`,
 the server looks up the requested model in the registry, asks the engine

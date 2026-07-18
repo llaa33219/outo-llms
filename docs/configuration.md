@@ -26,9 +26,10 @@ Its complete shape is:
     "name": "llamacpp"
   },
   "server": {
-    "host": "127.0.0.1",
-    "https": false,
-    "port": 8611
+    "domain": "",
+    "host": "0.0.0.0",
+    "https": true,
+    "port": 443
   }
 }
 ```
@@ -37,13 +38,14 @@ The fields are:
 
 | Path | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `server.host` | string | `127.0.0.1` | Interface where the managed API server listens. |
-| `server.port` | integer | `8611` | Port where the managed API server listens. |
-| `server.https` | boolean | `false` | Whether Uvicorn serves HTTPS using the generated certificate and key. |
+| `server.host` | string | `0.0.0.0` | Interface where the managed API server listens. |
+| `server.port` | integer | `443` | Port where the managed API server listens. |
+| `server.https` | boolean | `true` | Whether Uvicorn serves HTTPS using the generated certificate and key. |
+| `server.domain` | string | `""` | Domain or IP used as the certificate CN/SAN. When empty, the certificate falls back to the auto-detected primary IP (or `localhost` if detection fails). Existing certificates are regenerated when the value changes. |
 | `engine.name` | string | `llamacpp` | Active engine adapter, either `llamacpp` or `vllm`. |
 | `engine.extra_args` | array of strings | `[]` | Extra command-line arguments appended to the active engine's serve command. |
 
-Missing files and missing keys fall back to these defaults when the configuration is loaded. `setup` writes all fields. `engine use` changes `engine.name`.
+Missing files and missing keys fall back to these defaults when the configuration is loaded. `setup` writes all fields. `engine use` changes `engine.name`. `setup` with a `--domain` value updates `server.domain` and regenerates the certificate on the next start.
 
 ### `engine.extra_args`
 
@@ -58,9 +60,10 @@ For example, a configuration may contain:
     "name": "llamacpp"
   },
   "server": {
-    "host": "127.0.0.1",
-    "https": false,
-    "port": 8611
+    "domain": "203.0.113.10",
+    "host": "0.0.0.0",
+    "https": true,
+    "port": 443
   }
 }
 ```

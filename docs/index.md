@@ -13,7 +13,7 @@ The inference engine runs in an isolated virtual environment managed by outo-llm
 5. Send an authenticated request to `POST /v1/chat/completions` or `POST /v1/completions`. The engine starts when the first request needs it.
 6. Inspect metering at `GET /v1/usage`, the dashboard at `/`, or the interactive API reference at `/docs`.
 
-The default server is `http://127.0.0.1:8611`. llama.cpp uses port `8612` by default and vLLM uses port `8613` by default. Those engine ports are internal and are not the client API.
+By default the server listens on `0.0.0.0:443` with HTTPS, so the dashboard is at `https://<your-server-ip-or-domain>/` with no port in the URL. llama.cpp uses port `8612` by default and vLLM uses port `8613` by default. Those engine ports are internal and are not the client API.
 
 ## Documentation map
 

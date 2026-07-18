@@ -24,17 +24,15 @@ The `default` workspace is created automatically during signup.
 
 ## Network binding
 
-`setup` defaults to `127.0.0.1:8611`. The server binds to this loopback address and is not reachable from other machines by default.
-
-To expose the API to other machines on a LAN or the wider network, pass `--host 0.0.0.0` (or another interface) to `setup`. Doing so means the server is reachable by any host that can route to the listening port and that any client with a valid `outo_sk_` key can call it. There is no built-in rate limit or IP allow list. Use an external reverse proxy or a host firewall for those controls if you need them.
+`setup` defaults to `0.0.0.0:443` with HTTPS enabled, so the server is reachable on the network right after a default install. To restrict the API to the local machine, pass `--host 127.0.0.1` (or another loopback address) to `setup`. With a public host the server is reachable by any host that can route to the listening port and any client with a valid `outo_sk_` key can call it. There is no built-in rate limit or IP allow list. Use an external reverse proxy or a host firewall for those controls if you need them.
 
 The engine processes always bind to `127.0.0.1`. Their ports (`8612` by default for llama.cpp, `8613` for vLLM) are not the client API and should not be opened to other machines.
 
 ## HTTPS
 
-`setup --https` generates a self-signed certificate and key in `data/certs/`. The key file is written with mode `0600`. The certificate includes `localhost` and `127.0.0.1` as subject alternative names. If `setup --host` is given an IP address, that IP is also added; if a host name, that name is added.
+`setup` generates a self-signed certificate and key in `data/certs/`. The key file is written with mode `0600`. The certificate's CN and subject alternative names cover `localhost`, `127.0.0.1`, the value of `server.domain` (or `--domain` to `setup`), and, when that value is a domain rather than an IP, the machine's auto-detected primary IP. Existing certificates are regenerated when `--domain` changes. When binding a port below `1024` on a POSIX system without root, setup runs `sudo setcap cap_net_bind_service=+ep <python>` after announcing the step and confirming (or auto-confirming with `--yes`); the action log records the exact command.
 
-Browsers will warn about the self-signed certificate. To proceed in development, either:
+Browsers will warn about the self-signed certificate. The first visit to the dashboard prompts a one-time confirmation step in the browser; every visitor of the API over HTTPS will see the same warning. To proceed in development, either:
 
 * Use `curl -k` to ignore the warning.
 * Trust the certificate in your browser's or system's certificate store.
@@ -81,7 +79,7 @@ The implementation rule is: any code path that touches the system must go throug
 ## Recommended practices
 
 * Treat `outo_sk_` keys as credentials. Store them in a password manager or in an environment variable, not in scripts shared with other users.
-* Bind to `127.0.0.1` whenever possible. Use a reverse proxy if remote access is required.
+* Bind to `127.0.0.1` whenever possible. Use a reverse proxy if remote access is required, even when the default HTTPS deployment is in place.
 * Run setup without `--yes` until you understand the announcements, then consider `--yes` for reproducible deployments.
 * Periodically inspect the action log to confirm recorded behavior matches your expectations.
 * Use `outo-llms reset` when you want a clean state. It is destructive and irreversible.

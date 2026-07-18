@@ -1,11 +1,11 @@
 # Server API
 
-The API is served by FastAPI. The default base URL is `http://127.0.0.1:8611`. If setup enables HTTPS, replace `http` with `https` and account for the self-signed certificate. Interactive Swagger UI is at `/docs`.
+The API is served by FastAPI. By default setup deploys HTTPS on port `443`, so the base URL is `https://<your-server-ip-or-domain>`; the certificate is self-signed, so curl examples pass `-k` and browsers ask for a one-time confirmation. Interactive Swagger UI is at `/docs`.
 
 Set common shell variables for the examples:
 
 ```bash
-BASE_URL="http://127.0.0.1:8611"
+BASE_URL="https://<your-server-ip-or-domain>"
 API_KEY="outo_sk_<key-created-by-signup>"
 ```
 
@@ -403,7 +403,7 @@ The proxy uses OpenAI-compatible paths and request formats. Configure an OpenAI 
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://127.0.0.1:8611/v1",
+    base_url="https://<your-server-ip-or-domain>/v1",
     api_key="outo_sk_<key-created-by-signup>",
 )
 
@@ -414,4 +414,4 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-For HTTPS, use `https://host:port/v1` and configure the client for the self-signed certificate as appropriate for your environment.
+The default deployment uses a self-signed certificate. Point your HTTP client at the certificate file, or disable verification in non-production environments (for the OpenAI Python client, pass an `httpx.Client` configured with `verify=False` or with the certificate as the CA bundle).
