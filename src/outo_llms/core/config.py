@@ -13,6 +13,7 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8611
     https: bool = False
+    domain: str = ""
 
 
 @dataclass
@@ -43,6 +44,7 @@ def load_config() -> Config:
         host=str(server_raw.get("host", ServerConfig.host)),
         port=int(server_raw.get("port", ServerConfig.port)),
         https=bool(server_raw.get("https", ServerConfig.https)),
+        domain=str(server_raw.get("domain", ServerConfig.domain)),
     )
     engine = EngineConfig(
         name=str(engine_raw.get("name", EngineConfig.name)),

@@ -20,26 +20,48 @@ from . import consent, paths
 _VALID_DAYS = 825
 
 
-def _san_entries(common_name: str) -> list[x509.GeneralName]:
+def _name_entry(name: str) -> x509.GeneralName:
+    try:
+        return x509.IPAddress(ipaddress.ip_address(name))
+    except ValueError:
+        return x509.DNSName(name)
+
+
+def _san_entries(common_name: str, extra_names: list[str]) -> list[x509.GeneralName]:
     entries: list[x509.GeneralName] = [
         x509.DNSName("localhost"),
         x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+        _name_entry(common_name),
     ]
-    try:
-        entries.append(x509.IPAddress(ipaddress.ip_address(common_name)))
-    except ValueError:
-        entries.append(x509.DNSName(common_name))
+    seen = {"localhost", "127.0.0.1", common_name}
+    for name in extra_names:
+        if name in seen:
+            continue
+        seen.add(name)
+        entries.append(_name_entry(name))
     return entries
 
 
-def ensure_self_signed_cert(common_name: str) -> tuple[Path, Path]:
-    """Return ``(cert_path, key_path)``, generating a self-signed pair if absent."""
+def ensure_self_signed_cert(
+    common_name: str, extra_names: list[str] | None = None
+) -> tuple[Path, Path]:
+    """Return ``(cert_path, key_path)``, generating a self-signed pair if absent
+    or if the existing certificate was issued for a different common name."""
     paths.ensure_dirs()
     cert_path = paths.certs_dir() / "server.crt"
     key_path = paths.certs_dir() / "server.key"
     if cert_path.is_file() and key_path.is_file():
-        return cert_path, key_path
+        try:
+            existing = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            existing_cn = existing.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+        except Exception:
+            # A corrupt or unparseable certificate must not block setup;
+            # fall through and regenerate the pair.
+            existing_cn = None
+        if existing_cn == common_name:
+            return cert_path, key_path
 
+    extras = extra_names if extra_names is not None else []
     consent.announce("generate self-signed HTTPS certificate", str(cert_path))
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     now = dt.datetime.now(dt.timezone.utc)
@@ -52,7 +74,7 @@ def ensure_self_signed_cert(common_name: str) -> tuple[Path, Path]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
         .not_valid_after(now + dt.timedelta(days=_VALID_DAYS))
-        .add_extension(x509.SubjectAlternativeName(_san_entries(common_name)), critical=False)
+        .add_extension(x509.SubjectAlternativeName(_san_entries(common_name, extras)), critical=False)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .sign(key, hashes.SHA256())
     )

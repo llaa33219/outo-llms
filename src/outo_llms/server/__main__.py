@@ -16,7 +16,10 @@ def main() -> None:
 
     app = "outo_llms.server.app:create_app"
     if cfg.server.https:
-        cert, key = certs.ensure_self_signed_cert(cfg.server.host)
+        common_name = cfg.server.domain or (
+            cfg.server.host if cfg.server.host != "0.0.0.0" else "localhost"
+        )
+        cert, key = certs.ensure_self_signed_cert(common_name)
         uvicorn.run(
             app,
             factory=True,
