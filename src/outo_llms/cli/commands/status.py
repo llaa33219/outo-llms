@@ -15,6 +15,13 @@ def _server_table() -> Table:
     cfg = config_mod.load_config()
     scheme = "https" if cfg.server.https else "http"
     pid = process.server_pid()
+    display_host = cfg.server.domain or cfg.server.host
+    default_port = 443 if cfg.server.https else 80
+    base_url = (
+        f"{scheme}://{display_host}"
+        if cfg.server.port == default_port
+        else f"{scheme}://{display_host}:{cfg.server.port}"
+    )
     table = Table(title="Server")
     table.add_column("Property")
     table.add_column("Value")
@@ -23,7 +30,8 @@ def _server_table() -> Table:
     table.add_row("host", cfg.server.host)
     table.add_row("port", str(cfg.server.port))
     table.add_row("https", "yes" if cfg.server.https else "no")
-    table.add_row("base url", f"{scheme}://{cfg.server.host}:{cfg.server.port}")
+    table.add_row("domain", cfg.server.domain or "-")
+    table.add_row("base url", base_url)
     return table
 
 
