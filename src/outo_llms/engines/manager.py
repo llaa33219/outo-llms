@@ -1,0 +1,288 @@
+"""Engine lifecycle manager.
+
+Owns everything about an engine's presence on the machine:
+
+- each engine gets an isolated virtualenv at ``engines_dir()/<name>/venv``;
+  installs go only into that venv, never into the system interpreter;
+- running engines are tracked by state files directly under
+  ``engines_dir()``: ``<name>.pid``, ``<name>.port`` and ``<name>.model``;
+- engines always bind 127.0.0.1 - engine ports are internal only, exposed
+  to clients exclusively through the outo-llms API server;
+- every action is announced (:func:`consent.announce`) and logged
+  (:func:`consent.log_action`) - nothing happens silently.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import socket
+import subprocess
+import sys
+import time
+from collections import deque
+from collections.abc import Callable
+from pathlib import Path
+
+import httpx
+
+from ..core import config as config_mod
+from ..core import consent, paths, process
+from .base import ModelRef, adapter_names, get_adapter
+
+_PIP_TAIL_LINES = 20
+
+
+def _base_url(port: int) -> str:
+    return f"http://127.0.0.1:{port}/v1"
+
+
+class EngineManager:
+    """Installs, selects, launches and stops inference engines."""
+
+    def __init__(self) -> None:
+        """Stateless: all state lives on disk (config + engines_dir())."""
+
+    # -- inspection ------------------------------------------------------
+
+    def available(self) -> list[str]:
+        """Names of every registered engine adapter."""
+        return adapter_names()
+
+    def current_name(self) -> str:
+        """Engine name from the config (defaults to ``llamacpp``)."""
+        return config_mod.load_config().engine.name
+
+    def is_installed(self, name: str | None = None) -> bool:
+        """True when the marker file and the venv python both exist."""
+        engine = self.current_name() if name is None else name
+        return self._marker(engine).is_file() and self.venv_python(engine).is_file()
+
+    def venv_python(self, name: str) -> Path:
+        """Interpreter path inside the engine's venv (may not exist yet)."""
+        venv_dir = self._engine_dir(name) / "venv"
+        unix_python = venv_dir / "bin" / "python"
+        if unix_python.exists():
+            return unix_python
+        return venv_dir / "Scripts" / "python.exe"
+
+    def current_model(self) -> str | None:
+        """Registry name of the running model, or None if nothing runs."""
+        name = self.current_name()
+        if self._live_pid(name) is None:
+            return None
+        return self._read_model(name)
+
+    def status(self) -> dict[str, str | bool | int | None]:
+        """Snapshot of the current engine: installed/running/pid/model/port."""
+        name = self.current_name()
+        pid = self._live_pid(name)
+        port = self._read_port(name) if pid is not None else None
+        return {
+            "engine": name,
+            "installed": self.is_installed(name),
+            "running": pid is not None,
+            "pid": pid,
+            "model": self.current_model(),
+            "port": port,
+            "base_url": _base_url(port) if port is not None else None,
+        }
+
+    # -- install / select ------------------------------------------------
+
+    def install(
+        self, name: str, *, on_event: Callable[[str], None] | None = None
+    ) -> None:
+        """Create the engine venv and pip-install the adapter requirements.
+
+        Every pip line is forwarded to ``on_event`` (when given). Raises
+        ValueError for unknown engines and RuntimeError when pip fails.
+        """
+        adapter = get_adapter(name)
+        engine_dir = self._engine_dir(name)
+        venv_dir = engine_dir / "venv"
+        paths.ensure_dirs()
+        engine_dir.mkdir(parents=True, exist_ok=True)
+
+        consent.announce(f"create virtualenv for {adapter.display_name}", str(venv_dir))
+        subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+
+        python = self.venv_python(name)
+        consent.announce("upgrade pip in the engine virtualenv", name)
+        self._run_pip([str(python), "-m", "pip", "install", "--upgrade", "pip"], on_event)
+
+        requirements = ", ".join(adapter.pip_requirements)
+        consent.announce(f"install {adapter.display_name} into the venv", requirements)
+        self._run_pip([str(python), "-m", "pip", "install", *adapter.pip_requirements], on_event)
+
+        timestamp = dt.datetime.now().isoformat(timespec="seconds")
+        self._marker(name).write_text(f"{timestamp}\n", encoding="utf-8")
+        consent.log_action("install_engine", name)
+
+    def use(self, name: str) -> None:
+        """Select ``name`` as the current engine (must be installed)."""
+        get_adapter(name)
+        if not self.is_installed(name):
+            raise RuntimeError(
+                f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
+            )
+        cfg = config_mod.load_config()
+        cfg.engine.name = name
+        config_mod.save_config(cfg)
+        consent.log_action("use_engine", name)
+
+    # -- run / stop ------------------------------------------------------
+
+    def ensure_running(self, model: ModelRef, *, startup_timeout: float = 900.0) -> str:
+        """Guarantee the current engine serves ``model``; return the base URL.
+
+        Restarts the engine when a different model (or a stale process) is
+        recorded. Raises RuntimeError/ValueError on setup mismatches and
+        RuntimeError when the engine fails to become ready.
+        """
+        name = self.current_name()
+        adapter = get_adapter(name)
+        if not self.is_installed(name):
+            raise RuntimeError(
+                f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
+            )
+        if not adapter.supports(model):
+            raise ValueError(
+                f"engine '{name}' cannot serve model '{model.name}' "
+                f"(kind {model.kind!r}, source {model.source!r})"
+            )
+        pid = self._live_pid(name)
+        port = self._read_port(name)
+        if pid is not None and port is not None and self._read_model(name) == model.name:
+            return _base_url(port)
+
+        self.stop()
+
+        cfg = config_mod.load_config()
+        port = self._free_port(adapter.default_port)
+        log_path = paths.logs_dir() / f"engine-{name}.log"
+        paths.ensure_dirs()
+        argv = adapter.serve_argv(self.venv_python(name), model, port, cfg.engine.extra_args)
+        consent.announce(f"start {adapter.display_name}", f"{model.name} on 127.0.0.1:{port}")
+        consent.log_action("start_engine", f"{name}: {model.name} on 127.0.0.1:{port}")
+
+        log_handle = log_path.open("a", encoding="utf-8")
+        proc = subprocess.Popen(
+            argv,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        process.write_pid(self._pid_path(name), proc.pid)
+        self._port_path(name).write_text(f"{port}\n", encoding="utf-8")
+        self._model_path(name).write_text(f"{model.name}\n", encoding="utf-8")
+
+        base_url = _base_url(port)
+        deadline = time.monotonic() + startup_timeout
+        while True:
+            returncode = proc.poll()
+            if returncode is not None:
+                raise RuntimeError(
+                    f"engine '{name}' exited during startup (code {returncode}); "
+                    f"see log: {log_path}"
+                )
+            try:
+                response = httpx.get(f"{base_url}/models", timeout=0.5)
+                if response.status_code == 200:
+                    return base_url
+            except httpx.HTTPError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"engine '{name}' did not become ready within "
+                    f"{startup_timeout:.0f}s; see log: {log_path}"
+                )
+            time.sleep(1.0)
+
+    def stop(self) -> None:
+        """Stop the current engine (if running) and clear its state files."""
+        name = self.current_name()
+        pid = process.read_pid(self._pid_path(name))
+        if pid is not None and process.pid_alive(pid):
+            consent.announce(f"stop engine '{name}'", f"pid {pid}")
+            process.kill_pid(pid)
+        process.remove_pid(self._pid_path(name))
+        self._port_path(name).unlink(missing_ok=True)
+        self._model_path(name).unlink(missing_ok=True)
+        consent.log_action("stop_engine", name)
+
+    # -- internals -------------------------------------------------------
+
+    @staticmethod
+    def _engine_dir(name: str) -> Path:
+        return paths.engines_dir() / name
+
+    @staticmethod
+    def _marker(name: str) -> Path:
+        return paths.engines_dir() / name / "INSTALLED"
+
+    @staticmethod
+    def _pid_path(name: str) -> Path:
+        return paths.engines_dir() / f"{name}.pid"
+
+    @staticmethod
+    def _port_path(name: str) -> Path:
+        return paths.engines_dir() / f"{name}.port"
+
+    @staticmethod
+    def _model_path(name: str) -> Path:
+        return paths.engines_dir() / f"{name}.model"
+
+    def _live_pid(self, name: str) -> int | None:
+        pid = process.read_pid(self._pid_path(name))
+        if pid is None or not process.pid_alive(pid):
+            return None
+        return pid
+
+    def _read_port(self, name: str) -> int | None:
+        try:
+            return int(self._port_path(name).read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+
+    def _read_model(self, name: str) -> str | None:
+        try:
+            text = self._model_path(name).read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return text or None
+
+    @staticmethod
+    def _free_port(preferred: int) -> int:
+        """First port >= ``preferred`` with nothing listening on 127.0.0.1."""
+        port = preferred
+        while True:
+            with socket.socket() as sock:
+                sock.settimeout(0.5)
+                if sock.connect_ex(("127.0.0.1", port)) != 0:
+                    return port
+            port += 1
+
+    @staticmethod
+    def _run_pip(argv: list[str], on_event: Callable[[str], None] | None) -> None:
+        """Stream a pip invocation, forwarding each line to ``on_event``."""
+        tail: deque[str] = deque(maxlen=_PIP_TAIL_LINES)
+        with subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+        ) as proc:
+            assert proc.stdout is not None  # guaranteed by stdout=PIPE
+            for line in proc.stdout:
+                stripped = line.rstrip()
+                tail.append(stripped)
+                if on_event is not None:
+                    on_event(stripped)
+            returncode = proc.wait()
+        if returncode != 0:
+            raise RuntimeError(
+                f"pip install failed (exit {returncode}); last output:\n"
+                + "\n".join(tail)
+            )
