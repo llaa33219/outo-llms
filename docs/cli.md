@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.0`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.1`.
 
 ## `outo-llms setup`
 
@@ -42,7 +42,7 @@ outo-llms setup --engine llamacpp --no-https --no-open-port --yes
 outo-llms setup --host 0.0.0.0 --port 443 --domain api.example.com --engine vllm
 ```
 
-System effects include creating directories under the platformdirs config and data locations, writing configuration and database files, creating a venv, running pip inside that venv, generating certificates, running the Linux firewall tool (`ufw` or `firewalld`), running `sudo setcap` when binding a privileged port, and starting a detached server process. Every setup step is announced. The setup plan and action log show the paths, selected values, and the exact commands run.
+System effects include creating directories under the platformdirs config and data locations, writing configuration and database files, creating a venv, running pip inside that venv, generating certificates, running the Linux firewall tool via sudo when not root (`ufw` or `firewalld`), running `sudo setcap` when binding a privileged port, and starting a detached server process. Every setup step is announced. The setup plan and action log show the paths, selected values, and the exact commands run.
 
 ## `outo-llms models`
 

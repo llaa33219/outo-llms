@@ -106,6 +106,13 @@ def _grant_privileged_port(port: int, *, ask: bool) -> None:
         )
 
 
+def _sudo() -> list[str]:
+    """sudo prefix for firewall tools - ufw and firewall-cmd require root."""
+    if os.name == "posix" and os.geteuid() != 0:
+        return ["sudo"]
+    return []
+
+
 def _open_firewall_port(port: int, *, ask: bool) -> None:
     """Open ``port``/tcp with the detected firewall tool, or explain how."""
     if platform.system() != "Linux":
@@ -116,18 +123,18 @@ def _open_firewall_port(port: int, *, ask: bool) -> None:
         return
     if shutil.which("ufw"):
         consent.run_system(
-            ["ufw", "allow", f"{port}/tcp"],
+            [*_sudo(), "ufw", "allow", f"{port}/tcp"],
             reason="open the server port in ufw",
             ask=ask,
         )
     elif shutil.which("firewall-cmd"):
         consent.run_system(
-            ["firewall-cmd", "--permanent", f"--add-port={port}/tcp"],
+            [*_sudo(), "firewall-cmd", "--permanent", f"--add-port={port}/tcp"],
             reason="open the server port in firewalld",
             ask=ask,
         )
         consent.run_system(
-            ["firewall-cmd", "--reload"],
+            [*_sudo(), "firewall-cmd", "--reload"],
             reason="apply the firewalld change",
             ask=ask,
         )

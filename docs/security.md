@@ -42,7 +42,7 @@ A production deployment should put a reverse proxy in front of the loopback bind
 
 ## Firewall changes
 
-`setup --open-port` may invoke `ufw allow <port>/tcp` or `firewall-cmd --permanent --add-port=<port>/tcp` followed by `firewall-cmd --reload`. Automatic firewall configuration is Linux-only.
+`setup --open-port` may invoke `sudo ufw allow <port>/tcp` or `sudo firewall-cmd --permanent --add-port=<port>/tcp` followed by `sudo firewall-cmd --reload` (the `sudo` prefix is used when outo-llms is not running as root). Automatic firewall configuration is Linux-only.
 
 The exact command is announced and then run without a shell. Without `--yes`, the system prompts for consent. With `--yes`, the prompt is skipped, but the announcement and the action log still record the action.
 
