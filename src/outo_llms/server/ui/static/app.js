@@ -3,6 +3,7 @@
 
   const STORAGE_KEY = "outo_llms_session";
   const LEGACY_STORAGE_KEY = "outo_llms_api_key";
+  const INFERENCE_KEYS_STORAGE_KEY = "outo_llms_keys";
   const SIGN_IN_MIGRATION_NOTICE = "Sign-in changed: please log in with your username and password (API keys are now only for inference).";
   const migratedLegacyKey = removeLegacyApiKey();
   const elements = {
@@ -30,6 +31,7 @@
   const state = {
     activeView: "models",
     sessionToken: readStoredSession(),
+    cachedInferenceKeys: readStoredInferenceKeys(),
     authNotice: "",
     notice: null,
     userStatus: "idle",
@@ -38,6 +40,11 @@
     workspaces: [],
     selectedWorkspaceName: "",
     currentWorkspaceName: "",
+    selectedModelName: "",
+    modelDetail: {
+      ...newViewState(),
+      requestId: 0,
+    },
     views: {
       models: newViewState(),
       status: newViewState(),
@@ -97,6 +104,105 @@
       } else {
         window.localStorage.removeItem(STORAGE_KEY);
       }
+    } catch (_error) {
+    }
+  }
+
+  function readStoredInferenceKeys() {
+    try {
+      const rawKeys = window.localStorage.getItem(INFERENCE_KEYS_STORAGE_KEY);
+      if (!rawKeys) {
+        return {};
+      }
+      const parsedKeys = JSON.parse(rawKeys);
+      if (!isObject(parsedKeys) || Array.isArray(parsedKeys)) {
+        return {};
+      }
+      const cachedKeys = {};
+      Object.entries(parsedKeys).forEach(([keyId, plaintext]) => {
+        if (keyId && typeof plaintext === "string" && plaintext.startsWith("outo_sk_")) {
+          cachedKeys[keyId] = plaintext;
+        }
+      });
+      return cachedKeys;
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  function storeInferenceKeys(cachedKeys) {
+    try {
+      window.localStorage.setItem(INFERENCE_KEYS_STORAGE_KEY, JSON.stringify(cachedKeys));
+    } catch (_error) {
+    }
+  }
+
+  function getCachedInferenceKey(keyId) {
+    const plaintext = state.cachedInferenceKeys[String(keyId)] || "";
+    return typeof plaintext === "string" && plaintext.startsWith("outo_sk_") ? plaintext : "";
+  }
+
+  function cacheInferenceKey(keyId, plaintext) {
+    if (keyId === null || keyId === undefined || typeof plaintext !== "string" || !plaintext.startsWith("outo_sk_")) {
+      return false;
+    }
+    const normalizedId = String(keyId);
+    if (!normalizedId) {
+      return false;
+    }
+    state.cachedInferenceKeys = {
+      ...state.cachedInferenceKeys,
+      [normalizedId]: plaintext,
+    };
+    storeInferenceKeys(state.cachedInferenceKeys);
+    return true;
+  }
+
+  function removeCachedInferenceKey(keyId) {
+    const normalizedId = String(keyId);
+    if (!Object.prototype.hasOwnProperty.call(state.cachedInferenceKeys, normalizedId)) {
+      return;
+    }
+    const cachedKeys = { ...state.cachedInferenceKeys };
+    delete cachedKeys[normalizedId];
+    state.cachedInferenceKeys = cachedKeys;
+    storeInferenceKeys(cachedKeys);
+  }
+
+  function listedInferenceKeyIds(keys) {
+    return new Set(
+      (Array.isArray(keys) ? keys : [])
+        .filter((key) => isObject(key) && key.id !== null && key.id !== undefined)
+        .map((key) => String(key.id)),
+    );
+  }
+
+  function cacheCreatedInferenceKeyFromList(plaintext, keys, knownKeyIds) {
+    const candidates = (Array.isArray(keys) ? keys : []).filter(
+      (key) => isObject(key)
+        && key.id !== null
+        && key.id !== undefined
+        && !key.revoked
+        && !knownKeyIds.has(String(key.id)),
+    );
+    return candidates.length === 1 ? cacheInferenceKey(candidates[0].id, plaintext) : false;
+  }
+
+  async function cacheCreatedInferenceKey(workspaceName, plaintext, knownKeyIds, listedKeys = null) {
+    if (!workspaceName) {
+      return;
+    }
+    if (cacheCreatedInferenceKeyFromList(plaintext, listedKeys, knownKeyIds)) {
+      return;
+    }
+    try {
+      const keys = await apiRequest(
+        `/v1/workspaces/${encodeURIComponent(workspaceName)}/keys`,
+        {},
+        undefined,
+        false,
+      );
+      cacheCreatedInferenceKeyFromList(plaintext, keys, knownKeyIds);
     } catch (_error) {
     }
   }
@@ -223,6 +329,7 @@
     state.workspaces = [];
     state.selectedWorkspaceName = "";
     state.currentWorkspaceName = "";
+    resetModelDetail();
     state.workspaceData = {
       status: "idle",
       keysStatus: "idle",
@@ -377,6 +484,9 @@
   }
 
   function renderModels() {
+    if (state.selectedModelName) {
+      return renderModelDetail();
+    }
     const view = state.views.models;
     const wrapper = node("div", "view view--models");
     wrapper.append(
@@ -406,7 +516,7 @@
     } else {
       const card = node("div", "card table-card");
       const tableWrap = node("div", "table-wrap");
-      const table = node("table", "data-table");
+      const table = node("table", "data-table data-table--models");
       table.append(node("caption", "sr-only", "Registered models"));
       const head = node("thead");
       const headRow = node("tr");
@@ -414,8 +524,20 @@
       head.append(headRow);
       const body = node("tbody");
       models.forEach((model) => {
+        const modelName = safeString(isObject(model) ? model.id : "", "");
         const row = node("tr");
-        row.append(node("td", "model-name", safeString(isObject(model) ? model.id : "")));
+        const cell = node("td", "model-row-cell");
+        if (modelName) {
+          const select = actionButton(modelName, "select-model", "model-row-button");
+          setAttributes(select, {
+            "data-model-name": modelName,
+            "aria-label": `View details for ${modelName}`,
+          });
+          cell.append(select);
+        } else {
+          cell.append(node("span", "model-name", "—"));
+        }
+        row.append(cell);
         body.append(row);
       });
       table.append(head, body);
@@ -427,6 +549,176 @@
     hint.append(node("span", "hint-line__label", "CLI only"), node("span", "hint-line__text", "Manage models with the CLI: "), node("code", "inline-code", "outo-llms models add|list|remove"));
     wrapper.append(hint);
     return wrapper;
+  }
+
+  function renderModelDetail() {
+    const view = state.modelDetail;
+    const wrapper = node("div", "view view--models model-detail-view");
+    wrapper.append(
+      pageHeader(
+        "CATALOG",
+        "Model detail",
+        "Inspect this registered model and copy a request example.",
+        actionButton("Back to models", "back-models", "button button--ghost"),
+      ),
+    );
+    if (view.status === "loading" || view.status === "idle") {
+      wrapper.append(loadingState("Loading model details"));
+      return wrapper;
+    }
+    if (view.status === "error") {
+      const actions = node("div", "button-row");
+      actions.append(
+        actionButton("Back to models", "back-models", "button button--ghost button--small"),
+        retryButton("retry-model-detail"),
+      );
+      const title = view.error instanceof ApiError && view.error.status === 404
+        ? "Model not found"
+        : "Could not load model details";
+      wrapper.append(errorState(view.error, actions, title));
+      return wrapper;
+    }
+    const model = isObject(view.data) ? view.data : null;
+    const modelName = safeString(model?.name, "");
+    if (!model || !modelName) {
+      wrapper.append(
+        emptyState(
+          "Model details unavailable",
+          "The server returned no details for this model.",
+          actionButton("Back to models", "back-models", "button button--ghost button--small"),
+        ),
+      );
+      return wrapper;
+    }
+
+    const content = node("div", "model-detail-content");
+    const infoCard = node("section", "card model-detail-card");
+    const heading = node("div", "card-heading");
+    const headingCopy = node("div");
+    headingCopy.append(node("p", "eyebrow", "MODEL"), node("h2", "card-title", modelName));
+    const kind = safeString(model.kind, "unknown").toLowerCase();
+    heading.append(headingCopy, node("span", "status-badge status-badge--accent", kind));
+    const details = node("dl", "status-list model-detail-list");
+    details.append(
+      node("dt", "status-list__term", "Source"),
+      node("dd", "status-list__value", safeString(model.source)),
+      node("dt", "status-list__term", "Registered"),
+      node("dd", "status-list__value", formatDate(model.created_at)),
+    );
+    infoCard.append(heading, details);
+    content.append(infoCard, renderModelExamples(modelName));
+    wrapper.append(content);
+    return wrapper;
+  }
+
+  function renderModelExamples(modelName) {
+    const section = node("section", "model-examples");
+    const heading = node("div", "model-examples__heading");
+    heading.append(
+      node("h2", "card-title", "Example requests"),
+      node("p", "muted-copy", "Copy a complete request and replace the placeholder API key."),
+    );
+    const examples = node("div", "request-examples");
+    modelRequestExamples(modelName).forEach((example) => {
+      examples.append(renderRequestExample(example.title, example.snippet));
+    });
+    section.append(
+      heading,
+      examples,
+      node("p", "muted-copy", "Replace outo_sk_... with an inference API key from your workspace."),
+    );
+    return section;
+  }
+
+  function modelRequestExamples(modelName) {
+    const origin = window.location.origin;
+    const modelLiteral = JSON.stringify(modelName);
+    const baseUrlLiteral = JSON.stringify(`${origin}/v1`);
+    const requestBody = JSON.stringify({
+      model: modelName,
+      messages: [{ role: "user", content: "Hello!" }],
+    });
+    return [
+      {
+        title: "curl",
+        snippet: `curl -s ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer outo_sk_..." \\\n  -H "Content-Type: application/json" \\\n  -d '${requestBody}'`,
+      },
+      {
+        title: "Python",
+        snippet: `from openai import OpenAI\n\nclient = OpenAI(base_url=${baseUrlLiteral}, api_key="outo_sk_...")\nresp = client.chat.completions.create(\n    model=${modelLiteral},\n    messages=[{"role": "user", "content": "Hello!"}],\n)\nprint(resp.choices[0].message.content)`,
+      },
+      {
+        title: "Node.js",
+        snippet: `import OpenAI from "openai";\n\nconst client = new OpenAI({ baseURL: ${baseUrlLiteral}, apiKey: "outo_sk_..." });\nconst resp = await client.chat.completions.create({\n  model: ${modelLiteral},\n  messages: [{ role: "user", content: "Hello!" }],\n});\nconsole.log(resp.choices[0].message.content);`,
+      },
+    ];
+  }
+
+  function renderRequestExample(title, snippet) {
+    const card = node("article", "card request-example");
+    const heading = node("div", "request-example__heading");
+    const copy = actionButton("Copy", "copy-snippet", "button button--ghost button--small");
+    setAttributes(copy, { "aria-label": `Copy ${title} example request` });
+    heading.append(node("h3", "card-title", title), copy);
+    const pre = node("pre", "request-example__pre");
+    pre.append(node("code", "request-example__code", snippet));
+    card.append(heading, pre);
+    return card;
+  }
+
+  function resetModelDetail() {
+    state.selectedModelName = "";
+    state.modelDetail = {
+      ...newViewState(),
+      requestId: state.modelDetail.requestId + 1,
+    };
+  }
+
+  function openModelDetail(modelName) {
+    if (!modelName) {
+      return;
+    }
+    state.selectedModelName = modelName;
+    state.modelDetail = {
+      ...newViewState(),
+      requestId: state.modelDetail.requestId + 1,
+    };
+    render();
+    loadModelDetail();
+  }
+
+  async function loadModelDetail() {
+    const modelName = state.selectedModelName;
+    if (!state.sessionToken || !modelName || state.modelDetail.status === "loading") {
+      return;
+    }
+    const requestId = state.modelDetail.requestId + 1;
+    state.modelDetail = {
+      status: "loading",
+      data: null,
+      error: null,
+      requestId,
+    };
+    render();
+    try {
+      const payload = await apiRequest(`/v1/models/${encodeURIComponent(modelName)}`);
+      if (requestId !== state.modelDetail.requestId || state.selectedModelName !== modelName) {
+        return;
+      }
+      state.modelDetail.data = payload;
+      state.modelDetail.status = "ready";
+      render();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        return;
+      }
+      if (requestId !== state.modelDetail.requestId || state.selectedModelName !== modelName) {
+        return;
+      }
+      state.modelDetail.error = error instanceof ApiError ? error : new ApiError("server unreachable", 0, true);
+      state.modelDetail.status = "error";
+      render();
+    }
   }
 
   function renderWorkspaces() {
@@ -511,7 +803,7 @@
       node("p", "eyebrow", "ACCESS"),
       node("h3", "card-title", "Inference API keys"),
       node("p", "card-description", "Use these keys as Bearer tokens for /v1/chat/completions and other inference endpoints."),
-      node("p", "card-description", "Keys are shown once at creation and never returned by listing."),
+      node("p", "card-description", "Keys you created in this browser can be copied again; keys created elsewhere were shown once."),
     );
     heading.append(headingCopy);
     card.append(heading);
@@ -547,7 +839,20 @@
       const label = safeString(isObject(key) ? key.label : "", "Unlabeled key");
       const id = isObject(key) ? key.id : "";
       const revoked = Boolean(isObject(key) && key.revoked);
+      const cachedKey = getCachedInferenceKey(id);
       const status = node("span", revoked ? "status-badge status-badge--muted" : "status-badge status-badge--success", revoked ? "Revoked" : "Active");
+      const keyCell = node("td");
+      keyCell.append(node("span", "key-label", label));
+      if (cachedKey) {
+        const copy = actionButton("Copy key", "copy-cached-key", "button button--ghost button--small key-copy-control");
+        setAttributes(copy, {
+          "data-key-id": id,
+          "aria-label": `Copy ${label} inference API key`,
+        });
+        keyCell.append(copy);
+      } else {
+        keyCell.append(node("span", "muted-copy key-copy-note", "Shown once at creation. Lost it? Revoke and recreate."));
+      }
       const actionCell = node("td", "table-actions");
       if (!revoked) {
         const revoke = actionButton("Revoke", "revoke-key", "button button--danger-ghost button--small");
@@ -556,7 +861,7 @@
       } else {
         actionCell.append(node("span", "muted-copy", "—"));
       }
-      item.append(node("td", "key-label", label), node("td", "", formatDate(isObject(key) ? key.created_at : "")), node("td", "", status), actionCell);
+      item.append(keyCell, node("td", "", formatDate(isObject(key) ? key.created_at : "")), node("td", "", status), actionCell);
       body.append(item);
     });
     table.append(head, body);
@@ -1034,7 +1339,7 @@
     setAttributes(form, { "data-form": isLogin ? "login" : "signup", novalidate: "" });
     const prefix = isLogin ? "login" : "signup";
     form.append(
-      formField(`${prefix}-username`, "Username", "e.g. luke", "text", true, 64, null, "username"),
+      formField(`${prefix}-username`, "Username", "e.g. username", "text", true, 64, null, "username"),
       formField(
         `${prefix}-password`,
         "Password",
@@ -1058,7 +1363,7 @@
   function renderSecretModal(panel) {
     panel.append(node("p", "eyebrow", "SAVE THIS KEY"), setAttributes(node("h2", "modal-title", state.modal.title), { id: "modal-title" }), node("p", "modal-description", state.modal.description));
     const warning = node("div", "secret-warning");
-    warning.append(node("strong", "secret-warning__title", "Shown only once"), node("p", "secret-warning__copy", "Copy this key now. outo-llms will not display the plaintext key again."));
+    warning.append(node("strong", "secret-warning__title", "Returned only once"), node("p", "secret-warning__copy", "The server will not return this plaintext key again. This browser keeps a local copy so you can copy it again from the workspace."));
     const secret = node("code", "secret-value", state.modal.secret);
     setAttributes(secret, { tabindex: "0", "aria-label": "New inference API key" });
     const copy = actionButton("Copy key", "copy-secret", "button button--primary");
@@ -1087,11 +1392,12 @@
     render();
   }
 
-  async function copySecret(button) {
-    const secret = state.modal?.kind === "secret" ? state.modal.secret : "";
+  async function copySecret(button, plaintext = "") {
+    const secret = plaintext || (state.modal?.kind === "secret" ? state.modal.secret : "");
     if (!secret) {
       return;
     }
+    const original = button.textContent;
     try {
       if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
         await navigator.clipboard.writeText(secret);
@@ -1103,7 +1409,6 @@
         document.execCommand("copy");
         input.remove();
       }
-      const original = button.textContent;
       button.textContent = "Copied";
       window.setTimeout(() => {
         if (button.isConnected) {
@@ -1114,7 +1419,7 @@
       button.textContent = "Copy failed";
       window.setTimeout(() => {
         if (button.isConnected) {
-          button.textContent = "Copy key";
+          button.textContent = original;
         }
       }, 1800);
     }
@@ -1218,6 +1523,7 @@
         "This key is for inference clients (curl, OpenAI SDK). Store it somewhere safe - it is shown once.",
         apiKey,
       );
+      cacheCreatedInferenceKey(state.currentWorkspaceName, apiKey, new Set());
       loadAccount();
     } catch (error) {
       if (state.modal) {
@@ -1323,6 +1629,7 @@
     }
     const formData = new FormData(form);
     const label = String(formData.get("key-label") || "").trim();
+    const knownKeyIds = listedInferenceKeyIds(state.workspaceData.keys);
     state.busyAction = "create-key";
     state.keyFormError = null;
     render();
@@ -1337,6 +1644,12 @@
       }
       state.busyAction = "";
       await loadWorkspaceData();
+      await cacheCreatedInferenceKey(
+        workspaceName,
+        apiKey,
+        knownKeyIds,
+        state.workspaceData.keys,
+      );
       openSecretModal(
         "Your new inference API key",
         `This inference key grants access to the ${workspaceName} workspace. Store it somewhere safe - it is shown once.`,
@@ -1366,6 +1679,7 @@
     render();
     try {
       await apiRequest(`/v1/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+      removeCachedInferenceKey(keyId);
       state.busyAction = "";
       showNotice("Inference API key revoked.", "success");
       await loadWorkspaceData();
@@ -1398,6 +1712,7 @@
     state.workspaces = [];
     state.selectedWorkspaceName = "";
     state.currentWorkspaceName = "";
+    resetModelDetail();
     state.workspaceData = {
       status: "idle",
       keysStatus: "idle",
@@ -1446,7 +1761,11 @@
       return;
     }
     if (state.activeView === "models") {
-      loadView("models");
+      if (state.selectedModelName) {
+        loadModelDetail();
+      } else {
+        loadView("models");
+      }
     } else if (state.activeView === "workspaces") {
       loadWorkspaceData();
     } else if (state.activeView === "status") {
@@ -1510,6 +1829,18 @@
         closeModal();
       } else if (action === "copy-secret") {
         copySecret(actionElement);
+      } else if (action === "copy-cached-key") {
+        copySecret(actionElement, getCachedInferenceKey(actionElement.dataset.keyId || ""));
+      } else if (action === "copy-snippet") {
+        const code = actionElement.closest(".request-example")?.querySelector(".request-example__code");
+        copySecret(actionElement, code?.textContent || "");
+      } else if (action === "select-model") {
+        openModelDetail(actionElement.dataset.modelName || "");
+      } else if (action === "back-models") {
+        resetModelDetail();
+        render();
+      } else if (action === "retry-model-detail") {
+        loadModelDetail();
       } else if (action === "retry-view") {
         retryView(actionElement.dataset.view || state.activeView);
       } else if (action === "retry-account" || action === "retry-profile") {
@@ -1572,6 +1903,9 @@
       closeModal();
     } else if (state.profileOpen) {
       state.profileOpen = false;
+      render();
+    } else if (state.activeView === "models" && state.selectedModelName) {
+      resetModelDetail();
       render();
     }
   }
