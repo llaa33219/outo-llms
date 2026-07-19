@@ -98,6 +98,15 @@ def wait_for_port(host: str, port: int, *, timeout: float) -> bool:
     return False
 
 
+def _tail(path: Path, *, lines: int = 15) -> str:
+    """Last ``lines`` of a log file, for error messages."""
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "<log unavailable>"
+    return "\n".join(content[-lines:]) or "<log empty>"
+
+
 def start_server() -> None:
     """Start the API server detached. Raises RuntimeError if already running
     or if the process dies during startup."""
@@ -122,12 +131,21 @@ def start_server() -> None:
     write_pid(paths.pid_file(), proc.pid)
     # A wildcard bind address is not connectable; probe loopback instead.
     check_host = "127.0.0.1" if cfg.server.host in ("0.0.0.0", "::") else cfg.server.host
-    if wait_for_port(check_host, cfg.server.port, timeout=_STARTUP_TIMEOUT):
-        return
+    deadline = time.monotonic() + _STARTUP_TIMEOUT
+    while time.monotonic() < deadline:
+        if _port_open(check_host, cfg.server.port):
+            return
+        if not pid_alive(proc.pid):
+            remove_pid(paths.pid_file())
+            raise RuntimeError(
+                "server exited during startup; last log lines:\n"
+                + _tail(paths.server_log())
+            )
+        time.sleep(0.25)
     if not pid_alive(proc.pid):
         remove_pid(paths.pid_file())
         raise RuntimeError(
-            f"server exited during startup; see log: {paths.server_log()}"
+            "server exited during startup; last log lines:\n" + _tail(paths.server_log())
         )
     consent.console.print(
         f"[yellow]server still starting; check `outo-llms status` or {paths.server_log()}[/]"
