@@ -160,6 +160,65 @@ def _open_firewall_port(port: int, *, ask: bool) -> None:
         )
 
 
+def _install_ca_trust(*, ask: bool) -> None:
+    """Install the local CA into the system trust store, or explain how."""
+    ca_crt = paths.certs_dir() / "ca.crt"
+    if platform.system() != "Linux":
+        console.print(
+            "[yellow]automatic trust-store installation is only supported on Linux; "
+            f"install {ca_crt} into your OS/browser trust store manually "
+            "(see docs/security.md).[/]"
+        )
+        return
+    if (
+        shutil.which("update-ca-certificates")
+        and Path("/usr/local/share/ca-certificates").is_dir()
+    ):
+        # Debian/Ubuntu: drop the CA in the anchor dir, then rebuild the bundle.
+        consent.run_system(
+            [
+                *_sudo(),
+                "install",
+                "-m",
+                "0644",
+                str(ca_crt),
+                "/usr/local/share/ca-certificates/outo-llms-local-ca.crt",
+            ],
+            reason="add the outo-llms local CA to the system trust store",
+            ask=ask,
+        )
+        consent.run_system(
+            [*_sudo(), "update-ca-certificates"],
+            reason="rebuild the system CA bundle",
+            ask=ask,
+        )
+    elif Path("/etc/pki/ca-trust/source/anchors").is_dir():
+        # Fedora/RHEL: same flow via the pki anchors directory.
+        consent.run_system(
+            [
+                *_sudo(),
+                "install",
+                "-m",
+                "0644",
+                str(ca_crt),
+                "/etc/pki/ca-trust/source/anchors/outo-llms-local-ca.crt",
+            ],
+            reason="add the outo-llms local CA to the system trust store",
+            ask=ask,
+        )
+        consent.run_system(
+            [*_sudo(), "update-ca-trust"],
+            reason="rebuild the system CA bundle",
+            ask=ask,
+        )
+    else:
+        console.print(
+            "[yellow]no supported trust store found (update-ca-certificates, "
+            f"update-ca-trust); install {ca_crt} into your system/browser "
+            "trust store manually (see docs/security.md).[/]"
+        )
+
+
 def setup(
     engine: EngineChoice | None = typer.Option(
         None, "--engine", "-e", help="Inference engine to install."
@@ -167,10 +226,15 @@ def setup(
     host: str = typer.Option("0.0.0.0", "--host", help="Interface the API server binds to."),
     port: int = typer.Option(443, "--port", "-p", help="Port the API server listens on."),
     https: bool | None = typer.Option(
-        None, "--https/--no-https", help="Serve the API over self-signed HTTPS."
+        None, "--https/--no-https", help="Serve the API over HTTPS."
     ),
     domain: str | None = typer.Option(
         None, "--domain", help="Domain or IP for the HTTPS certificate."
+    ),
+    trust_store: bool | None = typer.Option(
+        None,
+        "--trust-store/--no-trust-store",
+        help="Install the outo-llms local CA into the system trust store.",
     ),
     open_port: bool | None = typer.Option(
         None, "--open-port/--no-open-port", help="Open the server port in the system firewall."
@@ -192,7 +256,7 @@ def setup(
         engine = EngineChoice.llamacpp if yes else _prompt_engine()
     if https is None:
         https = True if yes else consent.confirm(
-            "Serve the API over HTTPS with a self-signed certificate?", default=True
+            "Serve the API over HTTPS?", default=True
         )
     if open_port is None:
         open_port = True if yes else consent.confirm(
@@ -224,6 +288,12 @@ def setup(
                     console.print(
                         f"[red]'{candidate}' is not a valid IP address or DNS hostname.[/]"
                     )
+        if trust_store is None:
+            trust_store = True if yes else consent.confirm(
+                "Install the local CA into this machine's trust store? "
+                "(curl and browsers on this machine will trust the server)",
+                default=True,
+            )
 
     plan = [
         f"1. Create directories under {paths.data_dir()} and {paths.config_dir()}",
@@ -236,10 +306,16 @@ def setup(
     step = 5
     if https:
         plan.append(
-            f"{step}. Generate a self-signed certificate for {domain_value} "
-            f"under {paths.certs_dir()}"
+            f"{step}. Create a local CA and a CA-signed certificate for "
+            f"{domain_value} under {paths.certs_dir()}"
         )
         step += 1
+        if trust_store:
+            plan.append(
+                f"{step}. Install the local CA into the system trust store "
+                "(update-ca-certificates)"
+            )
+            step += 1
     if _needs_privilege_grant(port):
         plan.append(
             f"{step}. Grant permission to bind privileged port {port} "
@@ -298,7 +374,7 @@ def setup(
                 if not _is_ip_address(domain_value) and (ip := _detect_primary_ip()) is not None
                 else []
             )
-            cert_path, key_path = certs.ensure_self_signed_cert(domain_value, extra_names=extras)
+            cert_path, key_path = certs.ensure_server_cert(domain_value, extra_names=extras)
             consent.log_action("setup.https_cert", f"cert={cert_path} key={key_path}")
 
         if _needs_privilege_grant(port):
@@ -306,6 +382,9 @@ def setup(
 
         if open_port:
             _open_firewall_port(port, ask=not yes)
+
+        if https and trust_store:
+            _install_ca_trust(ask=not yes)
 
         consent.announce("start outo-llms server", f"{host}:{port}")
         process.start_server()
@@ -322,13 +401,22 @@ def setup(
         if port == default_port
         else f"{scheme}://{display_host}:{port}"
     )
-    curl_flags = "-k " if https else ""
-    https_note = (
-        "[yellow]self-signed certificate - browsers will ask you to confirm "
-        "the exception, and curl needs -k.[/]\n"
-        if https
-        else ""
-    )
+    curl_flags = "-k " if https and not trust_store else ""
+    ca_crt = paths.certs_dir() / "ca.crt"
+    if https and trust_store:
+        https_note = (
+            "[green]the local CA is installed on this machine - curl works "
+            "without -k; on OTHER machines install the CA file first: "
+            f"{ca_crt} (see docs/security.md).[/]\n"
+        )
+    elif https:
+        https_note = (
+            "[yellow]the server certificate is untrusted until the local CA "
+            f"is installed: {ca_crt} (see docs/security.md) - until then "
+            "browsers warn and curl needs -k.[/]\n"
+        )
+    else:
+        https_note = ""
     summary = (
         f"[bold]Base URL:[/]   {base_url}\n"
         f"[bold]API docs:[/]   {base_url}/docs\n"
