@@ -29,7 +29,7 @@ Confirm the installed version:
 outo-llms version
 ```
 
-The current package version is `0.2.0`.
+The current package version is `0.2.1`.
 
 ## Operating system notes
 
