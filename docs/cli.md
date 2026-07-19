@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.6`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.7`.
 
 ## `outo-llms setup`
 
