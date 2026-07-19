@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>outo-llms</title>
+  <link rel="stylesheet" href="/ui/style.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <button class="wordmark" type="button" data-action="view" data-view="models" aria-label="Go to models">
+        <span class="wordmark__mark" aria-hidden="true">o</span><span>outo-llms</span>
+      </button>
+      <nav class="primary-nav" id="main-nav" aria-label="Main navigation" role="tablist">
+        <button class="nav-tab" type="button" role="tab" data-action="view" data-view="models" aria-selected="true">Models</button>
+        <button class="nav-tab" type="button" role="tab" data-action="view" data-view="workspaces" aria-selected="false">Workspaces</button>
+        <button class="nav-tab" type="button" role="tab" data-action="view" data-view="status" aria-selected="false">Server status</button>
+      </nav>
+      <div class="profile-anchor">
+        <button class="profile-trigger" id="profile-trigger" type="button" data-action="toggle-profile" aria-haspopup="true" aria-expanded="false">
+          <span class="profile-trigger__avatar" aria-hidden="true">?</span>
+          <span class="profile-trigger__label">Profile</span>
+          <span class="profile-trigger__chevron" aria-hidden="true"></span>
+        </button>
+        <div class="profile-menu" id="profile-menu" role="menu" hidden></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-shell" id="app-shell">
+    <div class="notice-region" id="notice-region" aria-live="polite"></div>
+    <section id="view-root" aria-live="polite"></section>
+  </main>
+
+  <div class="modal-root" id="modal-root" hidden></div>
+</body>
+</html>
