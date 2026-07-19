@@ -32,8 +32,9 @@ Full documentation lives in [`docs/`](docs/index.md).
 - **OpenAI-compatible proxy.** `POST /v1/chat/completions`,
   `POST /v1/completions`, and `GET /v1/models` speak the same shapes
   clients already know.
-- **Optional HTTPS.** A self-signed certificate is generated under
-  `data/certs/` when you ask for it.
+- **Optional HTTPS.** A local outo-llms CA is created under `data/certs/`
+  and signs the server certificate. Setup can install the CA into the
+  system trust store so clients trust it without warnings.
 - **Explicit automation with an action log.** Every setup step is
   announced, confirmed when destructive, and appended to `actions.log`.
 - **Dashboard and Swagger UI.** Visit the root URL for a tiny status
@@ -50,29 +51,32 @@ Prefer an isolated install? `pipx install outo-llms` works too.
 ## Quickstart
 
 `outo-llms setup` defaults to a public HTTPS deployment on port `443`:
-the API server binds `0.0.0.0:443`, a self-signed certificate covers the
-auto-detected server IP, and the firewall port is opened on the supported
-Linux toolchain. Substitute `<your-server-ip-or-domain>` with the address
-printed by `outo-llms status` (the example below uses the documentation
-placeholder `203.0.113.10`):
+the API server binds `0.0.0.0:443`, a server certificate signed by the
+local outo-llms CA covers the auto-detected server IP, the CA is installed
+into the system trust store, and the firewall port is opened on the
+supported Linux toolchain. Substitute `<your-server-ip-or-domain>` with
+the address printed by `outo-llms status` (the example below uses the
+documentation placeholder `203.0.113.10`):
 
 ```bash
 outo-llms setup                              # interactive, fully explicit setup
-curl -ks -X POST https://<your-server-ip-or-domain>/v1/account/signup \
+curl -s -X POST https://<your-server-ip-or-domain>/v1/account/signup \
   -H 'Content-Type: application/json' \
   -d '{"username": "me"}'                    # returns an api_key + default workspace
 outo-llms models add tinyllama               # register a Hugging Face model
-curl -ks https://<your-server-ip-or-domain>/v1/chat/completions \
+curl -s https://<your-server-ip-or-domain>/v1/chat/completions \
   -H "Authorization: Bearer outo_sk_..." \
   -H 'Content-Type: application/json' \
   -d '{"model": "tinyllama", "messages": [{"role": "user", "content": "hi"}]}'
-curl -ks https://<your-server-ip-or-domain>/v1/usage \
+curl -s https://<your-server-ip-or-domain>/v1/usage \
   -H "Authorization: Bearer outo_sk_..."    # per-workspace token accounting
 ```
 
-`curl -k` is required because the certificate is self-signed. The setup
-wizard prints the exact base URL it configured, the path to the action
-log, and writes a short summary you can copy into your shell history.
+The CA installed by setup is trusted on the server itself, so plain
+`curl https://...` works there. Other machines need to install
+`data/certs/ca.crt` once; until they do, keep `-k`. The setup wizard
+prints the exact base URL it configured, the path to the action log, and
+writes a short summary you can copy into your shell history.
 
 ## Commands
 

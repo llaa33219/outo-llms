@@ -29,7 +29,7 @@ The implementation keeps configuration human-readable in one JSON file and persi
 
 ## Automation
 
-A working deployment should come from a few explicit commands, not a long manual installation recipe. `outo-llms setup` creates the XDG directories, writes configuration, initializes SQLite, creates an isolated virtual environment for the selected engine, installs the engine requirements there, optionally creates a self-signed certificate, optionally invokes a Linux firewall tool, and starts the server in the background.
+A working deployment should come from a few explicit commands, not a long manual installation recipe. `outo-llms setup` creates the XDG directories, writes configuration, initializes SQLite, creates an isolated virtual environment for the selected engine, installs the engine requirements there, optionally creates a local CA and a CA-signed certificate, optionally invokes a Linux firewall tool, and starts the server in the background.
 
 The engine manager automates the next part. When a request names a registered model, it starts the active engine if needed, waits for its internal `/v1/models` endpoint to respond, and forwards the request through the managed API server.
 

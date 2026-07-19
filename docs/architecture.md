@@ -13,7 +13,7 @@ src/outo_llms/
 │   ├── config.py           JSON-backed server and engine configuration
 │   ├── consent.py          announce, confirm, confirm_twice, log_action, run_system
 │   ├── process.py          server start, stop, restart, pid helpers, port polling
-│   └── certs.py            self-signed certificate generation for HTTPS
+│   └── certs.py            local-CA and CA-signed certificate generation for HTTPS
 ├── engines/
 │   ├── base.py             EngineAdapter contract, ModelRef, adapter registry
 │   ├── llamacpp.py         llama.cpp adapter and serve argv
@@ -119,7 +119,7 @@ The API server is a detached process with output redirected to `data/logs/server
 
 Engine processes follow the same pattern with PID, port, and model name written directly under `data/engines/`. `EngineManager` reuses a running engine when the same model is requested, and it stops and restarts the engine when a different model is requested or when a stale PID is detected.
 
-The `__main__.py` for `outo_llms.server` calls `uvicorn.run(...)` with the configured host and port. If HTTPS is enabled, it asks `core/certs.py` for a self-signed pair and passes them to Uvicorn.
+The `__main__.py` for `outo_llms.server` calls `uvicorn.run(...)` with the configured host and port. If HTTPS is enabled, it asks `core/certs.py` for a CA-signed pair and passes them to Uvicorn.
 
 ## How fragmentation and fluidity show up
 

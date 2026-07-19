@@ -30,15 +30,44 @@ The engine processes always bind to `127.0.0.1`. Their ports (`8612` by default 
 
 ## HTTPS
 
-`setup` generates a self-signed certificate and key in `data/certs/`. The key file is written with mode `0600`. The certificate's CN and subject alternative names cover `localhost`, `127.0.0.1`, the value of `server.domain` (or `--domain` to `setup`), and, when that value is a domain rather than an IP, the machine's auto-detected primary IP. Existing certificates are regenerated when `--domain` changes. When binding a port below `1024` on a POSIX system without root, setup runs `sudo setcap cap_net_bind_service=+ep <python>` after announcing the step and confirming (or auto-confirming with `--yes`); the action log records the exact command.
+`setup` runs an mkcert-style local CA workflow. On the first setup with HTTPS, it creates a local root CA in `data/certs/`:
 
-Browsers will warn about the self-signed certificate. The first visit to the dashboard prompts a one-time confirmation step in the browser; every visitor of the API over HTTPS will see the same warning. To proceed in development, either:
+* `certs/ca.crt` is the public certificate of the outo-llms local CA. This is the one file clients need.
+* `certs/ca.key` is the CA's private key, written with mode `0600` and never written to logs or copied anywhere by the tool.
 
-* Use `curl -k` to ignore the warning.
-* Trust the certificate in your browser's or system's certificate store.
-* Front the API with a reverse proxy that uses a trusted certificate for the public hostname.
+The CA is then used to sign a server certificate (`certs/server.crt` and `certs/server.key`, key mode `0600`) whose CN and subject alternative names cover `localhost`, `127.0.0.1`, the value of `server.domain` (or `--domain` to `setup`), and, when that value is a domain rather than an IP, the machine's auto-detected primary IP.
 
-A production deployment should put a reverse proxy in front of the loopback binding and terminate TLS there. The managed API does not implement ACME or any other certificate renewal.
+The CA is kept across runs. It is reused when the domain changes and when the server certificate is regenerated, so clients only ever install one file: `ca.crt`. The server certificate is regenerated when the domain or IP changes or when its remaining validity drops below 30 days. The CA itself is valid for 10 years. The deployment target is LAN or private-IP HTTPS, so a public CA like Let's Encrypt is not applicable to this workflow.
+
+When binding a port below `1024` on a POSIX system without root, setup runs `sudo setcap cap_net_bind_service=+ep <python>` after announcing the step and confirming (or auto-confirming with `--yes`); the action log records the exact command.
+
+### Trusting the CA on the server itself
+
+`setup` offers a trust-store step. The flag is `--trust-store/--no-trust-store`; the prompt defaults to yes, and `--yes` accepts yes. On supported Linux systems, when not running as root, setup runs the steps through `sudo` after announcing and confirming each one, and records the exact commands in the action log:
+
+* Debian, Ubuntu, and derivatives: copy `certs/ca.crt` to `/usr/local/share/ca-certificates/outo-llms-local-ca.crt` with mode `0644`, then run `sudo update-ca-certificates`.
+* Fedora, RHEL, CentOS, and derivatives: copy `certs/ca.crt` to `/etc/pki/ca-trust/source/anchors/outo-llms-local-ca.crt`, then run `sudo update-ca-trust`.
+
+After this step runs successfully, `curl https://<server-ip>/` and browsers on the same machine trust the server with no warning and no `-k` flag.
+
+On non-Linux systems, or on Linux distributions the wizard does not recognize, setup prints manual instructions instead of running anything. The `ca.crt` file is still generated and the setup still announces and logs that fact.
+
+### Trusting the CA on client machines
+
+On machines other than the server, install the same `certs/ca.crt` file into the system or browser trust store. Once installed, those clients also trust the server certificate with no warning. The exact steps depend on the operating system:
+
+* **Linux.** Copy `ca.crt` into `/usr/local/share/ca-certificates/` (Debian/Ubuntu) or `/etc/pki/ca-trust/source/anchors/` (Fedora/RHEL), then run `sudo update-ca-certificates` or `sudo update-ca-trust` respectively. Use the same paths setup would have used on the server.
+* **macOS.** Open Keychain Access, drag `ca.crt` into the System keychain, then set "Always Trust" for that certificate. From a terminal, the equivalent command is `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt`.
+* **Windows.** Open `certlm.msc`, navigate to Trusted Root Certification Authorities, and import `ca.crt`. From an elevated command prompt, `certutil -addstore -f ROOT ca.crt` does the same.
+* **Firefox.** Firefox uses its own certificate store rather than the system one. Open Settings, go to Privacy & Security, scroll to Certificates, click View Certificates, choose Your Certificates or Authorities as appropriate, and import `ca.crt`. Trust the CA for websites.
+
+Until the CA is installed on a client, `curl` still needs `-k` and browsers still show the certificate warning. Installing `ca.crt` once is enough for that client, because the CA is reused across server-certificate regenerations.
+
+### Treating the CA private key as a secret
+
+`ca.key` never leaves the server under normal operation, and it is written with mode `0600`. Anyone who obtains the file can mint additional certificates that browsers and `curl` will trust for any host on this LAN. Treat `ca.key` like a password: do not copy it, do not commit it, and rotate the CA (delete `ca.crt` and `ca.key`, then re-run setup) if it is exposed.
+
+A production deployment that needs a publicly trusted certificate should put a reverse proxy in front of the loopback binding and terminate TLS there. The managed API does not implement ACME or any other certificate renewal.
 
 ## Firewall changes
 

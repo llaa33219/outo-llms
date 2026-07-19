@@ -96,6 +96,8 @@ The paths module is the single source of truth for filesystem locations:
 │   └── vllm.model
 ├── models/
 ├── certs/
+│   ├── ca.crt
+│   ├── ca.key
 │   ├── server.crt
 │   └── server.key
 └── logs/
@@ -113,7 +115,7 @@ The exact files present depend on which engines and HTTPS options you use.
 * `server.pid` records the detached API server process id.
 * `engines/` contains isolated engine environments, installation markers, and the active engine's PID, port, and model state files.
 * `models/` is created as part of the managed data layout. The model registry itself is stored in SQLite. The upstream engine and its model-loading libraries determine where downloaded model caches are placed.
-* `certs/` contains `server.crt` and the mode `0600` private key `server.key` when HTTPS is enabled.
+* `certs/` contains the local CA and the server certificate when HTTPS is enabled. `ca.crt` is the public certificate of the outo-llms local CA, valid for 10 years and shared across server-certificate regenerations. `ca.key` is the CA's mode `0600` private key and never leaves the server under normal operation; it is the only secret that can mint trusted certificates for this LAN. `server.crt` and `server.key` are the server certificate and its mode `0600` private key, signed by the CA. The server certificate is regenerated when the domain or IP changes or when its remaining validity drops below 30 days.
 * `logs/server.log` receives detached API server output.
 * `logs/engine-<name>.log` receives output from an engine subprocess.
 * `logs/actions.log` contains timestamped action records written by the explicitness machinery.

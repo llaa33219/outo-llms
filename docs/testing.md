@@ -21,12 +21,12 @@ BASE_URL="https://203.0.113.10"
 * `pip install outo-llms` (or `pipx install outo-llms`).
   * Expected: the command exits with status `0`. No traceback. The package is installed.
 * `outo-llms version`.
-  * Expected: prints `outo-llms 0.2.2` (or the version you installed).
+  * Expected: prints `outo-llms 0.2.3` (or the version you installed).
 
 ## Run setup
 
 * `outo-llms setup --engine llamacpp --yes`.
-  * Expected: the command announces each step. The interactive prompts default to `llamacpp`, HTTPS enabled, firewall enabled, and the auto-detected server IP for the certificate domain. Because the port is `443` (below `1024`), setup may prompt for `sudo` to run `setcap cap_net_bind_service=+ep <python>` when not running as root. It creates a venv under the data directory, installs `llama-cpp-python[server]` there, writes `config.json` with `host: 0.0.0.0`, `port: 443`, `https: true`, and the resolved `domain`, generates a self-signed certificate, opens the firewall port (Linux only), initializes `outo-llms.db`, and starts the server. The final panel shows the base URL (no `:443` suffix), the API docs URL, and the action log path.
+  * Expected: the command announces each step. The interactive prompts default to `llamacpp`, HTTPS enabled, trust-store installation enabled, firewall enabled, and the auto-detected server IP for the certificate domain. Because the port is `443` (below `1024`), setup may prompt for `sudo` to run `setcap cap_net_bind_service=+ep <python>` when not running as root. It creates a venv under the data directory, installs `llama-cpp-python[server]` there, writes `config.json` with `host: 0.0.0.0`, `port: 443`, `https: true`, and the resolved `domain`, creates the local CA in `certs/ca.crt` and `certs/ca.key` (key mode `0600`), signs the server certificate at `certs/server.crt` and `certs/server.key`, installs `ca.crt` into the system trust store (Linux only, via sudo), opens the firewall port (Linux only), initializes `outo-llms.db`, and starts the server. The final panel shows the base URL (no `:443` suffix), the API docs URL, and the action log path.
 * `outo-llms status`.
   * Expected: a `Server` table reports `running: yes`, a non-zero `pid`, `host: 0.0.0.0`, `port: 443`, `https: yes`, a `domain` row with the configured value, and a base URL like `https://203.0.113.10`. An `Engine` table reports `engine: llamacpp`, `installed: yes`, `running: no`, `port: 8612`, and `base_url: http://127.0.0.1:8612/v1`. A `Paths` table lists the config file, data dir, action log, and server log paths.
 
@@ -82,16 +82,16 @@ BASE_URL="https://203.0.113.10"
 
 ## Optional: loopback HTTPS
 
-* `outo-llms stop`, then `outo-llms setup --engine llamacpp --host 127.0.0.1 --port 8611 --https --no-open-port --yes`.
-  * Expected: the wizard regenerates the configuration with `host: 127.0.0.1`, `port: 8611`, `https: true`. A self-signed certificate and key are created in the data directory's `certs/` folder.
+* `outo-llms stop`, then `outo-llms setup --engine llamacpp --host 127.0.0.1 --port 8611 --https --no-trust-store --no-open-port --yes`.
+  * Expected: the wizard regenerates the configuration with `host: 127.0.0.1`, `port: 8611`, `https: true`. The local CA is reused and the server certificate is regenerated in the data directory's `certs/` folder (`ca.crt`, `ca.key`, `server.crt`, `server.key`).
 * `outo-llms start` if setup did not start the server.
 * `curl -ks https://127.0.0.1:8611/healthz`.
-  * Expected: HTTP `200` with `{"status":"ok"}`.
+  * Expected: HTTP `200` with `{"status":"ok"}`. With `--no-trust-store`, `-k` is still required on this machine. After rerunning setup without `--no-trust-store` (or by manually installing `certs/ca.crt`), plain `curl https://127.0.0.1:8611/healthz` works without `-k`.
 
 ## Optional: Dashboard and Swagger
 
 * Open `https://<your-server-ip-or-domain>/` (the base URL printed by `outo-llms setup`, with `203.0.113.10` substituted for the placeholder) in a browser.
-  * Expected: a self-signed-certificate confirmation step appears. Accept it to load an HTML page that shows `status: ok`, the active engine and its running state, the loaded model, the workspace count, and the model count. It links to `/docs` and `/healthz`.
+  * Expected: the page loads with no certificate warning because the local CA is already trusted on this machine. The dashboard HTML shows `status: ok`, the active engine and its running state, the loaded model, the workspace count, and the model count. It links to `/docs` and `/healthz`. On a machine that has not installed `ca.crt`, the browser shows a warning until the CA is trusted.
 * Open `https://<your-server-ip-or-domain>/docs` in a browser.
   * Expected: Swagger UI with the `account`, `workspaces`, `keys`, `usage`, and `proxy` route groups.
 

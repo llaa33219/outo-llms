@@ -1,6 +1,6 @@
 # Server API
 
-The API is served by FastAPI. By default setup deploys HTTPS on port `443`, so the base URL is `https://<your-server-ip-or-domain>`; the certificate is self-signed, so curl examples pass `-k` and browsers ask for a one-time confirmation. Interactive Swagger UI is at `/docs`.
+The API is served by FastAPI. By default setup deploys HTTPS on port `443`, so the base URL is `https://<your-server-ip-or-domain>`; the certificate is signed by the outo-llms local CA. On machines where that CA is installed (setup offers to install it on the server itself), no special handling is needed; elsewhere curl examples pass `-k` and browsers ask for a one-time confirmation. Interactive Swagger UI is at `/docs`.
 
 Set common shell variables for the examples:
 
@@ -414,4 +414,4 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-The default deployment uses a self-signed certificate. Point your HTTP client at the certificate file, or disable verification in non-production environments (for the OpenAI Python client, pass an `httpx.Client` configured with `verify=False` or with the certificate as the CA bundle).
+On machines where the outo-llms local CA is installed, no special client handling is needed. Otherwise, download the server's `certs/ca.crt` and pass it as the CA bundle (for the OpenAI Python client, an `httpx.Client` configured with `verify="/path/to/ca.crt"`), or disable verification in non-production environments (`verify=False`).

@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.2`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.3`.
 
 ## `outo-llms setup`
 
@@ -8,7 +8,7 @@ The package installs one console script, `outo-llms`. Running it without a subco
 outo-llms setup [OPTIONS]
 ```
 
-Runs the setup wizard. It creates the configuration and data directories, writes `config.json`, initializes SQLite, creates an isolated engine virtual environment, installs that engine's requirements, generates a self-signed certificate for the configured domain or IP, opens the server port in a supported Linux firewall, and starts the API server in the background.
+Runs the setup wizard. It creates the configuration and data directories, writes `config.json`, initializes SQLite, creates an isolated engine virtual environment, installs that engine's requirements, creates a local CA and signs a server certificate for the configured domain or IP, optionally installs that CA into the system trust store, opens the server port in a supported Linux firewall, and starts the API server in the background.
 
 Options:
 
@@ -17,12 +17,13 @@ Options:
 | `--engine`, `-e` | `llamacpp` (prompt or `--yes`) | Engine to install: `llamacpp` or `vllm`. |
 | `--host` | `0.0.0.0` | Interface for the API server. |
 | `--port`, `-p` | `443` | API server port. |
-| `--domain` | auto-detected primary IP, falling back to `localhost` | Domain or IP for the HTTPS certificate. Detected locally without sending any traffic. The certificate's SANs cover `localhost`, `127.0.0.1`, the chosen value, and, when a domain is given, the detected primary IP. Existing certificates are regenerated when the domain changes. |
-| `--https` / `--no-https` | enabled (prompt default yes, `--yes` accepts yes) | Serve with a generated self-signed certificate. |
+| `--domain` | auto-detected primary IP, falling back to `localhost` | Domain or IP for the HTTPS certificate. Detected locally without sending any traffic. The certificate's SANs cover `localhost`, `127.0.0.1`, the chosen value, and, when a domain is given, the detected primary IP. The server certificate is regenerated when the domain changes or its remaining validity drops below 30 days; the CA itself is reused. |
+| `--https` / `--no-https` | enabled (prompt default yes, `--yes` accepts yes) | Serve with a server certificate signed by the local outo-llms CA. |
+| `--trust-store` / `--no-trust-store` | enabled (prompt default yes, `--yes` accepts yes) | Install `certs/ca.crt` into the system trust store on supported Linux systems. Non-Linux or unrecognized distributions print manual instructions instead. |
 | `--open-port` / `--no-open-port` | enabled (prompt default yes, `--yes` accepts yes) | Open the server port in the system firewall when supported (Linux only). |
 | `--yes`, `-y` | `false` | Do not prompt. Accept setup defaults and keep announcing and logging each action. |
 
-Without `--yes`, setup asks for the engine when it is not supplied, asks whether to use HTTPS (default yes), asks whether to open the firewall port (default yes), prompts for the certificate domain, and asks for confirmation of the displayed plan. If configuration already exists, it asks whether to reconfigure. With `--yes` and an existing configuration, setup does not reconfigure and exits while keeping the existing configuration.
+Without `--yes`, setup asks for the engine when it is not supplied, asks whether to use HTTPS (default yes), asks whether to install the CA into the system trust store (default yes), asks whether to open the firewall port (default yes), prompts for the certificate domain, and asks for confirmation of the displayed plan. If configuration already exists, it asks whether to reconfigure. With `--yes` and an existing configuration, setup does not reconfigure and exits while keeping the existing configuration.
 
 Privileged ports: when the chosen port is below `1024` on a POSIX system and outo-llms is not running as root, setup grants the Python interpreter permission to bind low ports with `sudo setcap cap_net_bind_service=+ep <python>`. The step is announced in the plan, confirmed unless `--yes` is set, and recorded in the action log. If the step fails or is declined, setup warns that the server may not bind the configured port and suggests picking a port above `1024`.
 
@@ -42,7 +43,7 @@ outo-llms setup --engine llamacpp --no-https --no-open-port --yes
 outo-llms setup --host 0.0.0.0 --port 443 --domain api.example.com --engine vllm
 ```
 
-System effects include creating directories under the platformdirs config and data locations, writing configuration and database files, creating a venv, running pip inside that venv, generating certificates, running the Linux firewall tool via sudo when not root (`ufw` or `firewalld`), running `sudo setcap` when binding a privileged port, and starting a detached server process. Every setup step is announced. The setup plan and action log show the paths, selected values, and the exact commands run.
+System effects include creating directories under the platformdirs config and data locations, writing configuration and database files, creating a venv, running pip inside that venv, creating the local CA and signing the server certificate, installing `ca.crt` into the system trust store via sudo on supported Linux systems (`update-ca-certificates` or `update-ca-trust`), running the Linux firewall tool via sudo when not root (`ufw` or `firewalld`), running `sudo setcap` when binding a privileged port, and starting a detached server process. Every setup step is announced. The setup plan and action log show the paths, selected values, and the exact commands run.
 
 ## `outo-llms models`
 

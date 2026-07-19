@@ -16,7 +16,7 @@ outo-llms version
 
 ## 2. Run setup
 
-This command runs setup without prompts, while still announcing and logging each action. It installs llama.cpp into its own engine virtual environment, binds the API server on `0.0.0.0:443`, generates a self-signed certificate for the auto-detected server IP, and opens the firewall on the supported Linux toolchain.
+This command runs setup without prompts, while still announcing and logging each action. It installs llama.cpp into its own engine virtual environment, binds the API server on `0.0.0.0:443`, creates a local CA and signs a server certificate for the auto-detected server IP, installs the CA into the system trust store on supported Linux systems, and opens the firewall on the supported Linux toolchain.
 
 ```bash
 outo-llms setup --engine llamacpp --yes
@@ -36,7 +36,7 @@ Setup also prints the API documentation URL and the action log path. If engine i
 
 ## 3. Create an account
 
-Signup is open and creates a user, a `default` workspace, and the first API key. The key is returned in plaintext only in this response, so copy it immediately. Use `-k` because the certificate is self-signed:
+Signup is open and creates a user, a `default` workspace, and the first API key. The key is returned in plaintext only in this response, so copy it immediately. The setup step installed the local CA into the trust store, so a plain `curl https://<server-ip>/` works on the server itself; on any other machine that has not installed `ca.crt` yet, keep `-k`:
 
 ```bash
 BASE_URL="https://203.0.113.10"
@@ -94,7 +94,7 @@ Use one setup path in a fresh installation. Switching engines later is covered i
 
 ## 5. Send the first chat completion
 
-Use the API key as a Bearer token. The proxy resolves `tinyllama` in the registry, starts the active engine on an internal loopback port if necessary, forwards the request, and returns the upstream OpenAI-style response. Keep `-k` for the self-signed certificate:
+Use the API key as a Bearer token. The proxy resolves `tinyllama` in the registry, starts the active engine on an internal loopback port if necessary, forwards the request, and returns the upstream OpenAI-style response. The trust store already trusts the local CA on the server, so no `-k` is needed; on other machines that have not installed `ca.crt`, pass `-k` until they do:
 
 ```bash
 curl -ks "$BASE_URL/v1/chat/completions" \
@@ -148,7 +148,7 @@ The dashboard is served at the base URL. Open it in a browser:
 https://<your-server-ip-or-domain>/
 ```
 
-The first visit shows a self-signed-certificate confirmation in the browser; accept it to load the page. The dashboard shows the server status, active engine, loaded model, workspace count, and registered model count. The Swagger UI is available at:
+The first visit loads with no certificate warning because the local CA is already trusted on this machine. On machines that have not installed `ca.crt`, browsers show a warning; install the CA from `data/certs/ca.crt` and the warning goes away. See [Security](security.md) for per-OS instructions. The dashboard shows the server status, active engine, loaded model, workspace count, and registered model count. The Swagger UI is available at:
 
 ```text
 https://<your-server-ip-or-domain>/docs
