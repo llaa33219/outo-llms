@@ -178,7 +178,7 @@ async def _forward(
     return await _forward_nonstream(url, body, ctx, model_name)
 
 
-@router.post("/chat/completions")
+@router.post("/chat/completions", response_model=None)
 async def chat_completions(
     request: Request, ctx: WorkspaceDep
 ) -> JSONResponse | StreamingResponse:
@@ -186,7 +186,7 @@ async def chat_completions(
     return await _forward(request, "chat/completions", ctx)
 
 
-@router.post("/completions")
+@router.post("/completions", response_model=None)
 async def completions(
     request: Request, ctx: WorkspaceDep
 ) -> JSONResponse | StreamingResponse:
