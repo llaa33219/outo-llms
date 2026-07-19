@@ -32,3 +32,45 @@ def require_workspace(request: Request) -> accounts.WorkspaceContext:
 
 
 WorkspaceDep = Annotated[accounts.WorkspaceContext, Depends(require_workspace)]
+
+
+def bearer_token(request: Request) -> str:
+    """Raw Bearer token from the Authorization header, or a 401."""
+    header = request.headers.get("Authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise openai_error(401, "missing or malformed Authorization header")
+    return token.strip()
+
+
+def require_user(request: Request) -> accounts.UserSession:
+    """Authenticate via ``Authorization: Bearer <session_token>`` -> user session."""
+    session = accounts.verify_session(bearer_token(request))
+    if session is None:
+        raise openai_error(401, "invalid or expired session token")
+    return session
+
+
+UserDep = Annotated[accounts.UserSession, Depends(require_user)]
+
+
+def require_session_or_workspace(
+    request: Request,
+) -> accounts.UserSession | accounts.WorkspaceContext:
+    """Authenticate with either a session token (web UI) or an API key (clients)."""
+    token = bearer_token(request)
+    if token.startswith("outo_st_"):
+        session = accounts.verify_session(token)
+        if session is None:
+            raise openai_error(401, "invalid or expired session token")
+        return session
+    ctx = accounts.verify_key(token)
+    if ctx is None:
+        raise openai_error(401, "invalid or revoked API key")
+    return ctx
+
+
+SessionOrWorkspaceDep = Annotated[
+    accounts.UserSession | accounts.WorkspaceContext,
+    Depends(require_session_or_workspace),
+]

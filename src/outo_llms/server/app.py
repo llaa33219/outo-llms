@@ -6,8 +6,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException
 
 import outo_llms
 
@@ -37,6 +38,20 @@ def _ui_404(message: str) -> JSONResponse:
 def create_app() -> FastAPI:
     """Build the outo-llms FastAPI application."""
     app = FastAPI(title="outo-llms", version=outo_llms.__version__, lifespan=_lifespan)
+
+    @app.exception_handler(HTTPException)
+    def openai_shape_errors(_request: Request, exc: HTTPException) -> JSONResponse:
+        """Normalize every HTTP error to the OpenAI ``{"error": {...}}`` body."""
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(
+                detail, status_code=exc.status_code, headers=exc.headers
+            )
+        return JSONResponse(
+            {"error": {"message": str(detail), "type": "invalid_request_error"}},
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
 
     app.include_router(account.router)
     app.include_router(workspaces.router)

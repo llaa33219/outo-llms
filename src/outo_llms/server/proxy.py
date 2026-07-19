@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..engines.base import ModelRef
 from . import accounts, registry, usage
-from .deps import WorkspaceDep, openai_error
+from .deps import SessionOrWorkspaceDep, WorkspaceDep, openai_error
 
 router = APIRouter(prefix="/v1", tags=["proxy"])
 
@@ -27,7 +27,7 @@ _TIMEOUT = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=None)
 
 
 @router.get("/models")
-def list_models(ctx: WorkspaceDep) -> dict[str, object]:
+def list_models(ctx: SessionOrWorkspaceDep) -> dict[str, object]:
     """List registered models in the OpenAI ``GET /v1/models`` shape."""
     return {
         "object": "list",
