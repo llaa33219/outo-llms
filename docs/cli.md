@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.3.1`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.3.2`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`
@@ -74,6 +74,7 @@ Options:
 | --- | --- | --- |
 | `--source`, `-s` | `NAME` | Hugging Face repository id or a local `.gguf` path. For llama.cpp, a `repo:file` source selects a file in a Hugging Face repository. |
 | `--kind`, `-k` | guessed from source | Model kind, either `hf` or `gguf`. If omitted, a source ending in `.gguf` or an existing path is treated as `gguf`; otherwise it is treated as `hf`. |
+| `--hf` | - | Shortcut for installing a Hugging Face model: takes the repository id, sets the source and forces `kind=hf`. Cannot be combined with `--source` or `--kind`. |
 | `--no-download` | download on registration | Skip the weight fetch and only insert the registry row. Use this for staged setups or when no engine is installed yet; `outo-llms models download NAME` fetches later. |
 
 Examples:
