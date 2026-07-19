@@ -10,6 +10,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import platform
+import re
 import shutil
 import socket
 import sys
@@ -80,6 +81,20 @@ def _is_ip_address(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)"
+    r"(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
+)
+
+
+def _valid_cert_name(value: str) -> bool:
+    if _is_ip_address(value):
+        return True
+    if value != "localhost" and "." not in value:
+        return False
+    return bool(_HOSTNAME_RE.match(value))
 
 
 def _needs_privilege_grant(port: int) -> bool:
@@ -187,16 +202,28 @@ def setup(
     domain_value = ""
     if https:
         if domain is not None:
+            if not _valid_cert_name(domain):
+                console.print(
+                    f"[red]'{domain}' is not a valid IP address or DNS hostname.[/]"
+                )
+                raise typer.Exit(1)
             domain_value = domain
         else:
             default_domain = _detect_primary_ip() or "localhost"
             if yes:
                 domain_value = default_domain
             else:
-                answer = console.input(
-                    f"[bold]?[/] domain or IP for the HTTPS certificate [{default_domain}] "
-                ).strip()
-                domain_value = answer or default_domain
+                while True:
+                    answer = console.input(
+                        f"[bold]?[/] domain or IP for the HTTPS certificate [{default_domain}] "
+                    ).strip()
+                    candidate = answer or default_domain
+                    if _valid_cert_name(candidate):
+                        domain_value = candidate
+                        break
+                    console.print(
+                        f"[red]'{candidate}' is not a valid IP address or DNS hostname.[/]"
+                    )
 
     plan = [
         f"1. Create directories under {paths.data_dir()} and {paths.config_dir()}",
