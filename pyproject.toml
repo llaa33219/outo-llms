@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "outo-llms"
-version = "0.3.2"
+version = "0.3.3"
 description = "Deploy local LLMs behind your own managed API server - vLLM or llama.cpp in isolated environments, with API keys, workspaces, and usage tracking."
 readme = "README.md"
 requires-python = ">=3.10"
