@@ -105,7 +105,7 @@ def _download_weights(name: str) -> bool:
 
     manager = EngineManager()
     try:
-        manager.download_model(model, on_event=_print_progress, choose=_pick_gguf)
+        target = manager.download_model(model, on_event=_print_progress, choose=_pick_gguf)
     except EngineNotInstalledError:
         console.print(
             "[yellow]no engine installed yet;[/] weights will download on first use "
@@ -125,6 +125,9 @@ def _download_weights(name: str) -> bool:
             )
         )
         raise typer.Exit(1) from exc
+    if target != model.source:
+        registry.update_source(name, target)
+        console.print(f"[dim]registry source pinned to {target}[/]")
     return True
 
 

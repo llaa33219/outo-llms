@@ -62,3 +62,13 @@ def remove_model(name: str) -> bool:
     with db.get_conn() as conn:
         cur = conn.execute("DELETE FROM models WHERE name = ?", (name,))
     return cur.rowcount > 0
+
+
+def update_source(name: str, source: str) -> bool:
+    """Point a registered model at a different source (e.g. repo:file)."""
+    db.init_db()
+    with db.get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE models SET source = ? WHERE name = ?", (source, name)
+        )
+    return cur.rowcount > 0

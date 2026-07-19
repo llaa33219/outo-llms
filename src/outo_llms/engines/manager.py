@@ -32,6 +32,14 @@ from .base import EngineAdapter, ModelRef, adapter_names, get_adapter
 
 _PIP_TAIL_LINES = 20
 
+_HF_DOWNLOAD_SNIPPET = """\
+import sys
+
+from huggingface_hub import hf_hub_download
+
+print(hf_hub_download(sys.argv[1], sys.argv[2]))
+"""
+
 _LIST_GGUF_SNIPPET = """\
 import sys
 
@@ -205,6 +213,7 @@ class EngineManager:
 
         self.stop()
 
+        model = self._resolve_serve_model(self.venv_python(name), model)
         cfg = config_mod.load_config()
         port = self._free_port(adapter.default_port)
         log_path = paths.logs_dir() / f"engine-{name}.log"
@@ -247,6 +256,42 @@ class EngineManager:
                 )
             time.sleep(1.0)
 
+    def _resolve_serve_model(self, python: Path, model: ModelRef) -> ModelRef:
+        """Resolve a HF-hosted GGUF source to its cached local file.
+
+        ``llama_cpp.server`` requires ``--model <path>``; HF sources are
+        served from the local cache (``models add``/``models download``
+        normally fetched them already). Other kinds and local paths pass
+        through unchanged.
+        """
+        if model.kind != "gguf" or Path(model.source).exists():
+            return model
+        if ":" in model.source:
+            repo, filename = model.source.split(":", 1)
+        else:
+            repo = model.source
+            candidates = self._list_gguf_files(python, model.source)
+            if len(candidates) == 1:
+                filename = candidates[0]
+            else:
+                listing = "\n".join(f"  - {candidate}" for candidate in candidates)
+                raise RuntimeError(
+                    f"repo {model.source!r} contains multiple .gguf files:\n"
+                    f"{listing}\nre-register with an exact file: "
+                    f"outo-llms models remove {model.name} && "
+                    f"outo-llms models add {model.name} -k gguf "
+                    f"-s {model.source}:<file>"
+                )
+        lines = self._run_hf_snippet(
+            [str(python), "-c", _HF_DOWNLOAD_SNIPPET, repo, filename],
+            None,
+            label="resolve model path",
+        )
+        local_path = lines[-1].strip() if lines else ""
+        if not local_path:
+            raise RuntimeError(f"could not resolve a local path for {repo}:{filename}")
+        return ModelRef(name=model.name, source=local_path, kind=model.kind)
+
     def stop(self) -> None:
         """Stop the current engine (if running) and clear its state files."""
         name = self.current_name()
@@ -267,7 +312,7 @@ class EngineManager:
         *,
         on_event: Callable[[str], None] | None = None,
         choose: Callable[[list[str]], str | None] | None = None,
-    ) -> None:
+    ) -> str:
         """Download ``model``'s weights into the shared Hugging Face cache.
 
         Uses the ``huggingface_hub`` package already present in the active
@@ -279,6 +324,9 @@ class EngineManager:
         Raises EngineNotInstalledError when the active engine is missing,
         KindMismatchError when it cannot serve ``model.kind``, and
         RuntimeError when listing or downloading fails.
+
+        Returns the resolved target: ``repo:file`` when a GGUF file was
+        selected, otherwise the source unchanged.
         """
         name = self.current_name()
         adapter = get_adapter(name)
@@ -290,7 +338,7 @@ class EngineManager:
             raise KindMismatchError(name, _adapter_kinds(adapter), model.kind)
         if Path(model.source).exists():
             consent.log_action("download_model", "local path, skipped")
-            return
+            return model.source
 
         python = self.venv_python(name)
         repo = model.source
@@ -323,6 +371,7 @@ class EngineManager:
             argv.append(filename)
         self._run_hf_snippet(argv, on_event, label="model download")
         consent.log_action("download_model", f"{name}:{model.source}")
+        return target
 
     # -- internals -------------------------------------------------------
 
