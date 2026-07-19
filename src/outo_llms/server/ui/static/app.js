@@ -890,6 +890,19 @@
     return wrapper;
   }
 
+  function render() {
+    elements.nav.querySelectorAll(".nav-tab").forEach((tab) => {
+      tab.setAttribute(
+        "aria-selected",
+        tab.dataset.view === state.activeView ? "true" : "false"
+      );
+    });
+    renderNotice();
+    renderView();
+    renderProfileMenu();
+    renderModal();
+  }
+
   function renderView() {
     clear(elements.viewRoot);
     elements.viewRoot.setAttribute("role", "tabpanel");
