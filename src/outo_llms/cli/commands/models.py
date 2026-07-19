@@ -110,6 +110,11 @@ def add(
         "-k",
         help="'hf' or 'gguf' (default: guessed from the source).",
     ),
+    hf: str | None = typer.Option(
+        None,
+        "--hf",
+        help="Hugging Face repo id to install (sets source and kind=hf).",
+    ),
     no_download: bool = typer.Option(
         False,
         "--no-download",
@@ -119,13 +124,19 @@ def add(
     """Register a model, then download its weights for the active engine."""
     from ...server import db, registry
 
-    resolved_source = source if source is not None else name
-    if kind is not None:
-        resolved_kind = kind
-    elif resolved_source.endswith(".gguf") or Path(resolved_source).exists():
-        resolved_kind = "gguf"
+    if hf is not None:
+        if source is not None or kind is not None:
+            console.print("[bold red]error:[/] --hf cannot be combined with --source or --kind.")
+            raise typer.Exit(1)
+        resolved_source, resolved_kind = hf, "hf"
     else:
-        resolved_kind = "hf"
+        resolved_source = source if source is not None else name
+        if kind is not None:
+            resolved_kind = kind
+        elif resolved_source.endswith(".gguf") or Path(resolved_source).exists():
+            resolved_kind = "gguf"
+        else:
+            resolved_kind = "hf"
 
     db.init_db()
     try:
