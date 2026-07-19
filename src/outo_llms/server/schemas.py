@@ -56,3 +56,33 @@ class UsageSummary(BaseModel):
     total_requests: int
     total_tokens: int
     by_model: list[ModelUsage]
+
+
+class ServerInfo(BaseModel):
+    host: str
+    port: int
+    https: bool
+    domain: str
+
+
+class EngineStatus(BaseModel):
+    engine: str
+    installed: bool
+    running: bool
+    pid: int | None
+    model: str | None
+    port: int | None
+    base_url: str | None
+
+
+class Counts(BaseModel):
+    users: int
+    workspaces: int
+    models: int
+
+
+class StatusOut(BaseModel):
+    version: str
+    server: ServerInfo
+    engine: EngineStatus
+    counts: Counts
