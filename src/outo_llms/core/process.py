@@ -49,7 +49,14 @@ def pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    # kill(pid, 0) succeeds for zombies, so check the /proc state field;
+    # comm may contain spaces/parens, so parse after its closing paren.
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+        state = stat.rpartition(")")[2].split()[0]
+    except (OSError, IndexError):
+        return True
+    return state != "Z"
 
 
 def kill_pid(pid: int, *, timeout: float = 10.0) -> bool:
@@ -135,14 +142,14 @@ def start_server() -> None:
     while time.monotonic() < deadline:
         if _port_open(check_host, cfg.server.port):
             return
-        if not pid_alive(proc.pid):
+        if proc.poll() is not None:
             remove_pid(paths.pid_file())
             raise RuntimeError(
                 "server exited during startup; last log lines:\n"
                 + _tail(paths.server_log())
             )
         time.sleep(0.25)
-    if not pid_alive(proc.pid):
+    if proc.poll() is not None:
         remove_pid(paths.pid_file())
         raise RuntimeError(
             "server exited during startup; last log lines:\n" + _tail(paths.server_log())
