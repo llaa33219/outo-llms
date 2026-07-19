@@ -29,8 +29,13 @@ def create_key(
     workspace_id = _owned_workspace_id(ctx.user_id, name)
     if workspace_id is None:
         raise openai_error(404, f"workspace {name!r} not found")
-    plaintext = accounts.create_key(workspace_id, body.label)
-    return KeyOut(api_key=plaintext, label=body.label, workspace=name)
+    created = accounts.create_key(workspace_id, body.label)
+    return KeyOut(
+        id=int(created["id"]),
+        api_key=str(created["api_key"]),
+        label=body.label,
+        workspace=name,
+    )
 
 
 @router.get("/workspaces/{name}/keys", response_model=list[KeyMeta])

@@ -43,6 +43,22 @@ def list_models(ctx: SessionOrWorkspaceDep) -> dict[str, object]:
     }
 
 
+@router.get("/models/{name}")
+def model_detail(name: str, ctx: SessionOrWorkspaceDep) -> dict[str, object]:
+    """Registry detail for one model, used by the web UI's model page."""
+    for row in registry.list_models():
+        if row["name"] == name:
+            return {
+                "name": row["name"],
+                "source": row["source"],
+                "kind": row["kind"],
+                "created_at": row["created_at"],
+            }
+    raise openai_error(
+        404, f"model {name!r} not found", code="model_not_found"
+    )
+
+
 def _resolve_model(body: dict[str, object]) -> tuple[str, ModelRef]:
     model_name = body.get("model")
     if not isinstance(model_name, str) or not model_name:

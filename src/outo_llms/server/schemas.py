@@ -50,6 +50,7 @@ class KeyCreate(BaseModel):
 
 
 class KeyOut(BaseModel):
+    id: int
     api_key: str
     label: str
     workspace: str

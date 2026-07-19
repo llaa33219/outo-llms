@@ -136,7 +136,7 @@ def signup(username: str, password: str) -> dict[str, object]:
             "INSERT INTO workspaces (user_id, name, created_at) VALUES (?, ?, ?)",
             (user_id, "default", db.utcnow()),
         )
-    api_key = create_key(_default_workspace_id(user_id))
+    api_key = str(create_key(_default_workspace_id(user_id))["api_key"])
     session_token = create_session(user_id)
     return {
         "user_id": user_id,
@@ -297,17 +297,17 @@ def list_workspaces(user_id: int) -> list[WorkspaceDict]:
     ]
 
 
-def create_key(workspace_id: int, label: str = "") -> str:
-    """Issue a new API key for a workspace; returns the plaintext once."""
+def create_key(workspace_id: int, label: str = "") -> dict[str, object]:
+    """Issue a new API key for a workspace; returns id and plaintext once."""
     db.init_db()
     plaintext = _KEY_PREFIX + secrets.token_urlsafe(24)
     with db.get_conn() as conn:
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO api_keys (workspace_id, key_hash, label, created_at)"
             " VALUES (?, ?, ?, ?)",
             (workspace_id, _hash_key(plaintext), label, db.utcnow()),
         )
-    return plaintext
+    return {"id": cursor.lastrowid, "api_key": plaintext}
 
 
 def list_keys(workspace_id: int) -> list[KeyDict]:
