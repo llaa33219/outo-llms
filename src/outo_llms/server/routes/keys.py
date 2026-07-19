@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .. import accounts
-from ..deps import WorkspaceDep, openai_error
+from ..deps import UserDep, openai_error
 from ..schemas import KeyCreate, KeyMeta, KeyOut
 
 router = APIRouter(prefix="/v1", tags=["keys"])
@@ -23,7 +23,7 @@ def _owned_workspace_id(user_id: int, name: str) -> int | None:
 def create_key(
     name: str,
     body: KeyCreate,
-    ctx: WorkspaceDep,
+    ctx: UserDep,
 ) -> KeyOut:
     """Issue a new API key for a workspace the authenticated user owns."""
     workspace_id = _owned_workspace_id(ctx.user_id, name)
@@ -36,7 +36,7 @@ def create_key(
 @router.get("/workspaces/{name}/keys", response_model=list[KeyMeta])
 def list_keys(
     name: str,
-    ctx: WorkspaceDep,
+    ctx: UserDep,
 ) -> list[KeyMeta]:
     """List key metadata (never hashes) for an owned workspace."""
     workspace_id = _owned_workspace_id(ctx.user_id, name)
@@ -48,7 +48,7 @@ def list_keys(
 @router.delete("/keys/{key_id}")
 def revoke_key(
     key_id: int,
-    ctx: WorkspaceDep,
+    ctx: UserDep,
 ) -> dict[str, bool]:
     """Revoke a key whose workspace belongs to the authenticated user."""
     for ws in accounts.list_workspaces(ctx.user_id):

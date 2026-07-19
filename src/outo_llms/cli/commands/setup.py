@@ -424,10 +424,11 @@ def setup(
         f"{https_note}"
         "\n"
         "[bold]Next steps[/]\n"
-        "1. Create an account (prints an API key):\n"
+        "1. Create an account (the response carries a session token for the\n"
+        "   web UI and an API key for inference):\n"
         f"   curl -s {curl_flags}-X POST {base_url}/v1/account/signup \\\n"
         "     -H 'Content-Type: application/json' \\\n"
-        '     -d \'{"username": "me"}\'\n'
+        '     -d \'{"username": "me", "password": "change-me"}\'\n'
         "2. Register a model:\n"
         "   outo-llms models add <name>"
     )

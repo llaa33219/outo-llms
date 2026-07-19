@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .. import accounts
-from ..deps import WorkspaceDep, openai_error
+from ..deps import UserDep, openai_error
 from ..schemas import WorkspaceCreate, WorkspaceOut
 
 router = APIRouter(prefix="/v1/workspaces", tags=["workspaces"])
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/v1/workspaces", tags=["workspaces"])
 @router.post("", response_model=WorkspaceOut)
 def create_workspace(
     body: WorkspaceCreate,
-    ctx: WorkspaceDep,
+    ctx: UserDep,
 ) -> WorkspaceOut:
     """Create a new workspace owned by the authenticated user."""
     try:
@@ -26,7 +26,7 @@ def create_workspace(
 
 @router.get("", response_model=list[WorkspaceOut])
 def list_workspaces(
-    ctx: WorkspaceDep,
+    ctx: UserDep,
 ) -> list[WorkspaceOut]:
     """List every workspace owned by the authenticated user."""
     return [

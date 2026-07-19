@@ -15,6 +15,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
+    password_hash TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -31,6 +32,13 @@ CREATE TABLE IF NOT EXISTS api_keys (
     label TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    token_hash TEXT UNIQUE NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS models (
     id INTEGER PRIMARY KEY,
@@ -64,8 +72,21 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring pre-existing databases up to the current schema (idempotent).
+
+    ``users.password_hash`` arrived with session-based account auth; older
+    databases get the column via ALTER TABLE. Rows without a hash are legacy
+    accounts that cannot log in - a fresh signup is required.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if "password_hash" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+
+
 def init_db() -> None:
     """Create the data directories and all tables (idempotent)."""
     paths.ensure_dirs()
     with get_conn() as conn:
         conn.executescript(_SCHEMA)
+        _migrate(conn)

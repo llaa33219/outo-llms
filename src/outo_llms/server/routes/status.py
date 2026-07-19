@@ -10,7 +10,7 @@ import outo_llms
 
 from .. import db
 from ...core import config as config_mod
-from ..deps import WorkspaceDep
+from ..deps import UserDep
 from ..schemas import Counts, EngineStatus, ServerInfo, StatusOut
 
 router = APIRouter(prefix="/v1/status", tags=["status"])
@@ -41,7 +41,7 @@ def _engine_status(engine_name: str) -> EngineStatus:
 
 
 @router.get("", response_model=StatusOut)
-def get_status(ctx: WorkspaceDep) -> StatusOut:
+def get_status(ctx: UserDep) -> StatusOut:
     """Server, engine, and row-count snapshot for the authenticated caller."""
     cfg = config_mod.load_config()
     with db.get_conn() as conn:

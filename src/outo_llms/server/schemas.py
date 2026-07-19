@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class SignupRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=8, max_length=256)
 
 
 class SignupResponse(BaseModel):
@@ -14,6 +15,12 @@ class SignupResponse(BaseModel):
     username: str
     workspace: str
     api_key: str
+    session_token: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class WorkspaceCreate(BaseModel):
@@ -24,6 +31,18 @@ class WorkspaceOut(BaseModel):
     id: int
     name: str
     created_at: str
+
+
+class LoginResponse(BaseModel):
+    session_token: str
+    user_id: int
+    username: str
+    workspaces: list[WorkspaceOut]
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=256)
 
 
 class KeyCreate(BaseModel):
