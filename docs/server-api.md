@@ -347,6 +347,7 @@ Response JSON, HTTP `200`:
 
 ```json
 {
+  "id": 3,
   "api_key": "outo_sk_<random-value>",
   "label": "local development",
   "workspace": "experiments"
@@ -474,6 +475,28 @@ Response JSON, HTTP `200`:
   ]
 }
 ```
+
+### `GET /v1/models/{name}`
+
+Returns the registry detail for one model. Accepts either a session Bearer or an API key Bearer, like the list endpoint. The web UI's model page uses it together with generated curl/Python/Node.js request examples.
+
+```bash
+curl -s "$BASE_URL/v1/models/tinyllama" \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "name": "tinyllama",
+  "source": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "kind": "hf",
+  "created_at": "2026-07-19T07:10:14.026930+00:00"
+}
+```
+
+Unknown model names return `404` with code `model_not_found`.
 
 ## OpenAI-compatible proxy
 

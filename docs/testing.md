@@ -21,7 +21,7 @@ BASE_URL="https://203.0.113.10"
 * `pip install outo-llms` (or `pipx install outo-llms`).
   * Expected: the command exits with status `0`. No traceback. The package is installed.
 * `outo-llms version`.
-  * Expected: prints `outo-llms 0.3.4` (or the version you installed).
+  * Expected: prints `outo-llms 0.3.5` (or the version you installed).
 
 ## Run setup
 
