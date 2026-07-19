@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
@@ -10,6 +11,10 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ...core import consent
+
+if TYPE_CHECKING:
+    from ...engines.base import ModelRef
+    from ...engines.manager import KindMismatchError
 
 console = Console()
 
@@ -51,6 +56,34 @@ def _pick_gguf(candidates: list[str]) -> str | None:
     return candidates[choice - 1]
 
 
+def _print_kind_guidance(model: ModelRef, exc: KindMismatchError) -> None:
+    """Show the exact commands that resolve an engine/kind mismatch."""
+    from rich.markup import escape
+
+    target = exc.kinds[0] if exc.kinds else "hf"
+    other = "vllm" if exc.engine == "llamacpp" else "llamacpp"
+    name = escape(model.name)
+    source = escape(model.source)
+    console.print(
+        Panel(
+            f"engine '{exc.engine}' serves '{target}' models only, "
+            f"but '{name}' is registered as '{exc.model_kind}'.\n\n"
+            f"[bold]Re-register with the right kind:[/]\n"
+            f"  outo-llms models remove {name}\n"
+            f"  outo-llms models add {name} -k {target} -s {source}\n\n"
+            f"[bold]Or switch the engine instead:[/]\n"
+            f"  outo-llms engine install {other} && outo-llms engine use {other}\n\n"
+            "[bold]What the flags mean:[/]\n"
+            "  -k, --kind KIND    model format: 'gguf' for llama.cpp, 'hf' for vLLM\n"
+            "  -s, --source SRC   Hugging Face repo id or a local .gguf path\n"
+            "                     (repo:file picks one file inside the repo)\n"
+            "      --hf REPO      shortcut for HF-format models; implies -k hf (for vLLM)",
+            title="kind mismatch - nothing was downloaded",
+            border_style="yellow",
+        )
+    )
+
+
 def _download_weights(name: str) -> bool:
     """Download weights for registered model ``name`` via the active engine.
 
@@ -80,7 +113,7 @@ def _download_weights(name: str) -> bool:
         )
         return False
     except KindMismatchError as exc:
-        console.print(f"[yellow]download skipped:[/] {exc}")
+        _print_kind_guidance(model, exc)
         return False
     except RuntimeError as exc:
         console.print(

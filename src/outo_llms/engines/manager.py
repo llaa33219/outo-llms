@@ -61,9 +61,27 @@ class EngineNotInstalledError(RuntimeError):
 class KindMismatchError(RuntimeError):
     """The active engine cannot serve the model's kind."""
 
+    def __init__(self, engine: str, kinds: list[str], model_kind: str) -> None:
+        self.engine = engine
+        self.kinds = kinds
+        self.model_kind = model_kind
+        super().__init__(
+            f"engine '{engine}' only serves {'/'.join(kinds)} models "
+            f"(this model is '{model_kind}')"
+        )
+
 
 def _base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/v1"
+
+
+def _adapter_kinds(adapter: EngineAdapter) -> list[str]:
+    """Model kinds ``adapter`` can serve, probed against the contract."""
+    return [
+        kind
+        for kind in ("hf", "gguf")
+        if adapter.supports(ModelRef(name="", source="", kind=kind))
+    ]
 
 
 class EngineManager:
@@ -269,11 +287,7 @@ class EngineManager:
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
             )
         if not adapter.supports(model):
-            raise KindMismatchError(
-                f"engine '{name}' only serves {self._served_kinds(adapter)} models; "
-                "switch engines with `outo-llms engine use` or register with "
-                "a different kind"
-            )
+            raise KindMismatchError(name, _adapter_kinds(adapter), model.kind)
         if Path(model.source).exists():
             consent.log_action("download_model", "local path, skipped")
             return
@@ -365,11 +379,7 @@ class EngineManager:
     @staticmethod
     def _served_kinds(adapter: EngineAdapter) -> str:
         """Human-readable list of the model kinds ``adapter`` can serve."""
-        kinds = [
-            kind
-            for kind in ("hf", "gguf")
-            if adapter.supports(ModelRef(name="", source="", kind=kind))
-        ]
+        kinds = _adapter_kinds(adapter)
         return " or ".join(kinds) if kinds else "no"
 
     @staticmethod
