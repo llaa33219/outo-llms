@@ -49,7 +49,7 @@ def create_app() -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/")
+    @app.get("/", response_model=None)
     def spa_index() -> FileResponse | JSONResponse:
         """Serve the SPA entry point, or a clear 404 when assets are absent."""
         index = _STATIC_DIR / _INDEX_FILE
@@ -57,7 +57,7 @@ def create_app() -> FastAPI:
             return _ui_404("web UI assets are missing from this install")
         return FileResponse(index)
 
-    @app.get("/ui/{filename}")
+    @app.get("/ui/{filename}", response_model=None)
     def spa_asset(filename: str) -> FileResponse | JSONResponse:
         """Serve a whitelisted SPA asset; never anything outside the static dir."""
         static_dir = _STATIC_DIR
