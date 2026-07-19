@@ -9,7 +9,7 @@ from fastapi import APIRouter
 import outo_llms
 
 from .. import db
-from ..core import config as config_mod
+from ...core import config as config_mod
 from ..deps import WorkspaceDep
 from ..schemas import Counts, EngineStatus, ServerInfo, StatusOut
 
