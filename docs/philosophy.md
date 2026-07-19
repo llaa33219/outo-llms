@@ -23,7 +23,7 @@ The same pattern applies to CLI work. A new command belongs in a module under `c
 
 ## Simplicity
 
-A small command set and a small dashboard cover the normal lifecycle. `setup` creates a working deployment. `models add`, `models list`, and `models remove` manage the registry. The engine, server, and reset commands cover the remaining operational actions. The server dashboard at `/` shows health, the active engine, the loaded model, workspace count, and model count. Swagger UI at `/docs` exposes the HTTP API interactively.
+A small command set and a small GUI cover the normal lifecycle. `setup` creates a working deployment. `models add`, `models list`, and `models remove` manage the registry. The engine, server, and reset commands cover the remaining operational actions. The web GUI at `/` offers signup and login, a read-only model catalog, workspace and API-key management, and server status. Swagger UI at `/docs` exposes the HTTP API interactively.
 
 The implementation keeps configuration human-readable in one JSON file and persistence local in one SQLite database. Clients can use ordinary `curl` requests or an OpenAI-compatible SDK.
 

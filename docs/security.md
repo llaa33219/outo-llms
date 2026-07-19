@@ -99,7 +99,7 @@ The implementation rule is: any code path that touches the system must go throug
 
 ## Things outo-llms does not do
 
-* It does not implement authentication for the dashboard at `/` or the health endpoint at `/healthz`. Both are open by design for local health checks.
+* It does not implement authentication for the web GUI assets at `/` or the health endpoint at `/healthz`. Both are open by design: the assets are static files and every `/v1` call the GUI makes still requires a valid API key.
 * It does not implement rate limits, quota enforcement, or per-key rate metering. It only records token usage.
 * It does not encrypt the SQLite database, the configuration file, or the action log. The platform filesystem permissions are the protection.
 * It does not validate the TLS chain of upstream clients.

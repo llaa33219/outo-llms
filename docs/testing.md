@@ -21,7 +21,7 @@ BASE_URL="https://203.0.113.10"
 * `pip install outo-llms` (or `pipx install outo-llms`).
   * Expected: the command exits with status `0`. No traceback. The package is installed.
 * `outo-llms version`.
-  * Expected: prints `outo-llms 0.2.3` (or the version you installed).
+  * Expected: prints `outo-llms 0.2.4` (or the version you installed).
 
 ## Run setup
 
@@ -88,12 +88,25 @@ BASE_URL="https://203.0.113.10"
 * `curl -ks https://127.0.0.1:8611/healthz`.
   * Expected: HTTP `200` with `{"status":"ok"}`. With `--no-trust-store`, `-k` is still required on this machine. After rerunning setup without `--no-trust-store` (or by manually installing `certs/ca.crt`), plain `curl https://127.0.0.1:8611/healthz` works without `-k`.
 
-## Optional: Dashboard and Swagger
+## Web GUI
 
-* Open `https://<your-server-ip-or-domain>/` (the base URL printed by `outo-llms setup`, with `203.0.113.10` substituted for the placeholder) in a browser.
-  * Expected: the page loads with no certificate warning because the local CA is already trusted on this machine. The dashboard HTML shows `status: ok`, the active engine and its running state, the loaded model, the workspace count, and the model count. It links to `/docs` and `/healthz`. On a machine that has not installed `ca.crt`, the browser shows a warning until the CA is trusted.
+* Open `https://<your-server-ip-or-domain>/` in a browser.
+  * Expected: the dependency-free single-page GUI loads at the base URL. On a machine that has not installed `ca.crt`, the browser shows a certificate warning until the CA is trusted.
+* Open `Profile`, choose `Sign up`, enter a new username, and submit.
+  * Expected: the account is created, the new API key is displayed once with a copy button, and the key is saved in the browser. Copy and save the key before leaving the screen.
+* Open the `Models` view.
+  * Expected: the registered model list is visible and read-only. There are no model add or remove actions in the GUI; use `outo-llms models add`, `outo-llms models list`, or `outo-llms models remove` for those operations.
+* Open the `Workspaces` view and create a workspace.
+  * Expected: the new workspace appears in the workspace list, and the current key's workspace usage summary is visible.
+* In the new workspace, create an API key, then revoke it.
+  * Expected: the new key is displayed once with a copy button, appears in the workspace key list as active, and then appears as revoked after the revoke action. The revoked key no longer authenticates requests.
+* Open the `Server status` view.
+  * Expected: the page shows the version, server host, port, HTTPS setting, domain, engine installed and running state, engine model and port, and user, workspace, and model counts.
+
+## Swagger UI
+
 * Open `https://<your-server-ip-or-domain>/docs` in a browser.
-  * Expected: Swagger UI with the `account`, `workspaces`, `keys`, `usage`, and `proxy` route groups.
+  * Expected: Swagger UI with the `account`, `workspaces`, `keys`, `usage`, and `proxy` route groups, including `GET /v1/status`.
 
 ## Reset
 

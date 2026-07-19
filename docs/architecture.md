@@ -21,7 +21,9 @@ src/outo_llms/
 │   └── manager.py          EngineManager: install, use, ensure_running, stop
 ├── server/
 │   ├── __main__.py         uvicorn entry point: `python -m outo_llms.server`
-│   ├── app.py              FastAPI factory, lifespan, /healthz, /
+│   ├── app.py              FastAPI factory, lifespan, /healthz, /v1/status, /, static UI
+│   ├── ui/
+│   │   └── static/         dependency-free SPA assets served at / and /ui/<name>
 │   ├── db.py               SQLite connection, schema, init_db, utcnow
 │   ├── accounts.py         users, workspaces, key issue/revoke/verify
 │   ├── registry.py         model registry CRUD
@@ -87,6 +89,8 @@ client                outo-llms API server                EngineManager       en
   │ OpenAI-style response or SSE stream                        │                    │
 ```
 
+The root request, `GET /`, serves the dependency-free GUI from `server/ui/static/`; named assets are available at `/ui/<name>`, and Swagger UI remains at `/docs`.
+
 For `chat/completions` and `completions`, the proxy does the following:
 
 1. Parse and validate the JSON body.
@@ -105,11 +109,11 @@ shell
 └── outo-llms start    (this process exits after subprocess.Popen + PID write)
     └── python -m outo_llms.server        (API server, detached via start_new_session=True)
         ├── uvicorn loop
-        │   ├── /healthz, /, /docs
+        │   ├── /healthz, /, /ui/<name>, /docs
         │   ├── /v1/account/signup, /v1/account/me
         │   ├── /v1/workspaces, /v1/workspaces/{name}/keys
         │   ├── /v1/keys/{key_id}
-        │   ├── /v1/usage
+        │   ├── /v1/usage, /v1/status
         │   └── /v1/models, /v1/chat/completions, /v1/completions
         └── EngineManager.ensure_running on demand
             └── python -m llama_cpp.server (or vllm.entrypoints.openai.api_server)

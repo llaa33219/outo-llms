@@ -34,9 +34,17 @@ https://203.0.113.10
 
 Setup also prints the API documentation URL and the action log path. If engine installation fails, inspect the setup output and the paths shown by `outo-llms status`.
 
-## 3. Create an account
+## 3. Open the web GUI and create an account
 
-Signup is open and creates a user, a `default` workspace, and the first API key. The key is returned in plaintext only in this response, so copy it immediately. The setup step installed the local CA into the trust store, so a plain `curl https://<server-ip>/` works on the server itself; on any other machine that has not installed `ca.crt` yet, keep `-k`:
+The built-in web GUI is served at the same base URL as the API. Open it in a browser:
+
+```text
+https://<your-server-ip-or-domain>/
+```
+
+In the `Profile` menu, choose `Sign up`, enter a username, and submit the form. The GUI displays the new API key once with a copy button. Copy and save the key immediately. The GUI stores the key in the browser's `localStorage`, so you can use `Profile` > `Log in` later to paste an existing key, or `Log out` to clear it.
+
+For API users who prefer curl, signup remains available as an open endpoint:
 
 ```bash
 BASE_URL="https://203.0.113.10"
@@ -57,7 +65,7 @@ Example response shape:
 }
 ```
 
-Set the returned value in your shell. Replace the placeholder with the complete key, including the `outo_sk_` prefix:
+Set the returned value in your shell. If you signed up in the GUI, use the copied value instead. Replace the placeholder with the complete key, including the `outo_sk_` prefix:
 
 ```bash
 API_KEY="outo_sk_<paste-the-key-from-signup>"
@@ -140,15 +148,22 @@ Example response shape after one successful request:
 
 The actual token counts come from the engine response and will vary.
 
-## 7. Inspect the deployment
+## 7. Use the web GUI
 
-The dashboard is served at the base URL. Open it in a browser:
+The built-in web GUI is a dependency-free single-page app written with vanilla HTML, CSS, and JavaScript. It has no CDN dependencies, so it works offline on a LAN once the server is reachable. Open the base URL:
 
 ```text
 https://<your-server-ip-or-domain>/
 ```
 
-The first visit loads with no certificate warning because the local CA is already trusted on this machine. On machines that have not installed `ca.crt`, browsers show a warning; install the CA from `data/certs/ca.crt` and the warning goes away. See [Security](security.md) for per-OS instructions. The dashboard shows the server status, active engine, loaded model, workspace count, and registered model count. The Swagger UI is available at:
+The top bar provides four views:
+
+* **Models** lists registered models. This view is read-only. Register or remove models with the CLI commands `outo-llms models add`, `outo-llms models list`, and `outo-llms models remove`.
+* **Workspaces** lists and creates workspaces. For each workspace, you can list, create, and revoke API keys. New keys are shown once with a copy button. The view also shows the usage summary for the workspace associated with the current key.
+* **Server status** shows the version, server host, port, HTTPS setting, domain, engine state, and user, workspace, and model counts.
+* **Profile** manages the current browser key. Use `Log in` to paste an existing key, `Sign up` to create an account and receive a key once, or `Log out` to clear the key from local storage.
+
+The first visit loads with no certificate warning because the local CA is already trusted on this machine. On machines that have not installed `ca.crt`, browsers show a warning; install the CA from `data/certs/ca.crt` and the warning goes away. See [Security](security.md) for per-OS instructions. The Swagger UI is available at:
 
 ```text
 https://<your-server-ip-or-domain>/docs

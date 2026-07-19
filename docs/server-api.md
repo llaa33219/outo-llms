@@ -34,6 +34,47 @@ Application errors use an OpenAI-style error object inside FastAPI's `detail` fi
 
 Some errors include a `code`, such as `model_not_found`. Request validation errors produced by FastAPI can use its standard validation response.
 
+## Status
+
+### `GET /v1/status`
+
+Returns the authenticated server configuration, active engine state, and aggregate user, workspace, and model counts. It requires the same Bearer key authentication as every other authenticated `/v1` endpoint. A missing, malformed, invalid, or revoked key returns HTTP `401`.
+
+```bash
+curl -s "$BASE_URL/v1/status" \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "version": "0.2.4",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 443,
+    "https": true,
+    "domain": "203.0.113.10"
+  },
+  "engine": {
+    "engine": "llamacpp",
+    "installed": true,
+    "running": true,
+    "pid": 1842,
+    "model": "tinyllama",
+    "port": 8612,
+    "base_url": "http://127.0.0.1:8612/v1"
+  },
+  "counts": {
+    "users": 1,
+    "workspaces": 1,
+    "models": 1
+  }
+}
+```
+
+The `pid`, `model`, `port`, and `base_url` fields are `null` when the engine has no corresponding runtime value.
+
 ## Account
 
 ### `POST /v1/account/signup`
@@ -367,7 +408,7 @@ curl -N "$BASE_URL/v1/chat/completions" \
   }'
 ```
 
-## Health and dashboard
+## Health and web GUI
 
 ### `GET /healthz`
 
@@ -387,13 +428,22 @@ Response JSON:
 
 ### `GET /`
 
-Open HTML dashboard. It reports server status, active engine state, loaded model, workspace count, and registered model count, with links to `/docs` and `/healthz`.
+Serves the built-in web GUI on the same host and port as the API, for example `https://your-server-ip/`. It is a dependency-free single-page app written with vanilla HTML, CSS, and JavaScript. It has no CDN dependencies, so it works offline on a LAN once the server is reachable. The old inline HTML dashboard has been replaced by this GUI. Swagger UI remains available at `/docs`.
+
+The top bar contains four views: `Models`, `Workspaces`, `Server status`, and `Profile`.
+
+* **Profile.** The GUI stores the API key in the browser's `localStorage`. `Log in` accepts an existing key and validates it with `GET /v1/account/me`. `Sign up` accepts a username, creates an account, and displays the new API key once with a copy button. `Log out` clears the stored key.
+* **Models.** Shows a read-only list of registered models. Add and remove operations remain CLI-only: `outo-llms models add`, `outo-llms models list`, and `outo-llms models remove`.
+* **Workspaces.** Lists and creates workspaces. For each workspace, the GUI lists, creates, and revokes API keys. New keys are shown once with a copy button. It also shows the usage summary for the workspace associated with the current key.
+* **Server status.** Shows the version, server host, port, HTTPS setting, domain, engine installed and running state, engine model and port, and user, workspace, and model counts.
+
+The static assets are packaged under `src/outo_llms/server/ui/static/` as `index.html`, `app.js`, and `style.css`. The server serves the entry page at `/` and named assets at `/ui/<name>`. If the assets are missing, `GET /` returns a JSON `404` response.
 
 ```bash
 curl -s "$BASE_URL/"
 ```
 
-Open the same URL in a browser for the rendered dashboard.
+Open the same URL in a browser to use the rendered GUI.
 
 ## OpenAI SDK compatibility
 

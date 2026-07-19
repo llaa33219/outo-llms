@@ -8,12 +8,12 @@ The inference engine runs in an isolated virtual environment managed by outo-llm
 
 1. Install the package with `pipx install outo-llms` or `pip install outo-llms`.
 2. Run `outo-llms setup`. Choose an engine, server address, HTTPS setting, and firewall behavior. Setup creates the data directories, database, isolated engine environment, and background server.
-3. Create an account with `POST /v1/account/signup`. The response contains the first API key and the `default` workspace. Save the key. Its plaintext is returned only when it is created.
+3. Open the web GUI at `/` and use `Profile` > `Sign up` to create an account. Save the API key when it is displayed once. API users can create an account with `POST /v1/account/signup` instead.
 4. Register a model with `outo-llms models add ...`.
 5. Send an authenticated request to `POST /v1/chat/completions` or `POST /v1/completions`. The engine starts when the first request needs it.
-6. Inspect metering at `GET /v1/usage`, the dashboard at `/`, or the interactive API reference at `/docs`.
+6. Inspect metering at `GET /v1/usage`, use the full web GUI at `/` for signup and login, read-only model browsing, workspace and API-key management, and server status, or open the interactive API reference at `/docs`.
 
-By default the server listens on `0.0.0.0:443` with HTTPS, so the dashboard is at `https://<your-server-ip-or-domain>/` with no port in the URL. llama.cpp uses port `8612` by default and vLLM uses port `8613` by default. Those engine ports are internal and are not the client API.
+By default the server listens on `0.0.0.0:443` with HTTPS, so the web GUI is at `https://<your-server-ip-or-domain>/` with no port in the URL. llama.cpp uses port `8612` by default and vLLM uses port `8613` by default. Those engine ports are internal and are not the client API.
 
 ## Documentation map
 

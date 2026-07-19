@@ -5,8 +5,9 @@ Deploy local LLMs behind your own managed, OpenAI-compatible API server.
 vLLM or llama.cpp runs in an **isolated environment** managed by outo-llms,
 kept apart from the Python environments you already have. Users sign up,
 receive API keys, organize work into workspaces, and every request is
-metered per workspace. Open the dashboard, point your OpenAI SDK at the
-URL, and the rest is just an HTTP call.
+metered per workspace. Open the built-in web GUI to sign up or log in, manage
+workspaces and API keys, and inspect server status, then point your OpenAI SDK
+at the URL for an HTTP call.
 
 Full documentation lives in [`docs/`](docs/index.md).
 
@@ -37,8 +38,9 @@ Full documentation lives in [`docs/`](docs/index.md).
   system trust store so clients trust it without warnings.
 - **Explicit automation with an action log.** Every setup step is
   announced, confirmed when destructive, and appended to `actions.log`.
-- **Dashboard and Swagger UI.** Visit the root URL for a tiny status
-  page, or `/docs` for the full OpenAPI explorer.
+- **Built-in web GUI.** Visit the root URL for signup and login, a read-only
+  model catalog, workspace and API-key management, and server status. Visit
+  `/docs` for the full OpenAPI explorer.
 
 ## Install
 
@@ -57,6 +59,11 @@ into the system trust store, and the firewall port is opened on the
 supported Linux toolchain. Substitute `<your-server-ip-or-domain>` with
 the address printed by `outo-llms status` (the example below uses the
 documentation placeholder `203.0.113.10`):
+
+After setup, open `https://<your-server-ip-or-domain>/` in a browser. The
+built-in web GUI supports signup and login, shows a read-only model catalog,
+manages workspaces and API keys, and reports server status. The API flow below
+uses curl instead, and model registration remains CLI-only.
 
 ```bash
 outo-llms setup                              # interactive, fully explicit setup
@@ -115,7 +122,7 @@ the calling workspace.
 Every state change, install step, and external command goes through
 `outo_llms.core.consent`, which announces what is about to happen, asks
 for confirmation on destructive actions, and writes a timestamped line to
-`logs/actions.log`. The dashboard at the root URL and Swagger UI at
+`logs/actions.log`. The built-in web GUI at the root URL and Swagger UI at
 `/docs` round out the picture.
 
 ## Documentation
