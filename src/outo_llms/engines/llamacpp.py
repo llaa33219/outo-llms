@@ -19,7 +19,10 @@ class LlamaCppAdapter(EngineAdapter):
 
     name: ClassVar[str] = "llamacpp"
     display_name: ClassVar[str] = "llama.cpp (llama-cpp-python)"
-    pip_requirements: ClassVar[list[str]] = ["llama-cpp-python[server]>=0.2.90"]
+    pip_requirements: ClassVar[list[str]] = [
+        "llama-cpp-python[server]>=0.2.90",
+        "huggingface-hub>=0.24",
+    ]
     default_port: ClassVar[int] = 8612
 
     def supports(self, model: ModelRef) -> bool:

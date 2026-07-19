@@ -321,7 +321,7 @@ class EngineManager:
         argv = [str(python), "-c", _DOWNLOAD_SNIPPET, repo]
         if filename is not None:
             argv.append(filename)
-        self._run_streaming(argv, on_event, env=os.environ.copy(), label="model download")
+        self._run_hf_snippet(argv, on_event, label="model download")
         consent.log_action("download_model", f"{name}:{model.source}")
 
     # -- internals -------------------------------------------------------
@@ -382,16 +382,41 @@ class EngineManager:
         kinds = _adapter_kinds(adapter)
         return " or ".join(kinds) if kinds else "no"
 
-    @staticmethod
-    def _list_gguf_files(python: Path, repo: str) -> list[str]:
+    def _list_gguf_files(self, python: Path, repo: str) -> list[str]:
         """Every ``*.gguf`` filename in HF repo ``repo``, via the venv python."""
-        lines = EngineManager._run_streaming(
+        lines = self._run_hf_snippet(
             [str(python), "-c", _LIST_GGUF_SNIPPET, repo],
             None,
-            env=os.environ.copy(),
             label="list repo files",
         )
         return [line for line in lines if line.endswith(".gguf")]
+
+    def _run_hf_snippet(
+        self,
+        argv: list[str],
+        on_event: Callable[[str], None] | None,
+        *,
+        label: str,
+    ) -> list[str]:
+        """Run a huggingface_hub snippet, healing a missing module once.
+
+        Engine venvs created before huggingface-hub became a requirement
+        lack it; in that case install it into the venv and retry once.
+        """
+        try:
+            return self._run_streaming(argv, on_event, env=os.environ.copy(), label=label)
+        except RuntimeError as exc:
+            if "No module named 'huggingface_hub'" not in str(exc):
+                raise
+        consent.announce(
+            "install huggingface-hub into the engine venv",
+            "required for downloads; missing from this venv",
+        )
+        self._run_pip(
+            [argv[0], "-m", "pip", "install", "huggingface-hub>=0.24"], on_event
+        )
+        consent.log_action("install_hf_hub", argv[0])
+        return self._run_streaming(argv, on_event, env=os.environ.copy(), label=label)
 
     @staticmethod
     def _run_streaming(
