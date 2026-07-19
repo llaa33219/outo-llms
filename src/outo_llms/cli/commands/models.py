@@ -6,6 +6,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from ...core import consent
@@ -13,6 +14,85 @@ from ...core import consent
 console = Console()
 
 models_app = typer.Typer(help="Manage the model registry.", no_args_is_help=True)
+
+
+def _print_progress(line: str) -> None:
+    """Forward one download output line verbatim (no Rich markup parsing)."""
+    console.print(line, markup=False, highlight=False)
+
+
+def _pick_gguf(candidates: list[str]) -> str | None:
+    """Numbered interactive picker over GGUF candidates; None cancels."""
+    console.print("[bold]multiple .gguf files found - pick one to download:[/]")
+    for index, candidate in enumerate(candidates, start=1):
+        console.print(f"  {index}. {candidate}", markup=False)
+    try:
+        answer = console.input("number (empty to cancel): ").strip()
+    except EOFError:
+        console.print()
+        console.print(
+            "[yellow]no interactive input;[/] re-run with `--source repo:file` "
+            "to pick one of:"
+        )
+        for candidate in candidates:
+            console.print(f"  - {candidate}", markup=False)
+        return None
+    except KeyboardInterrupt:
+        console.print()
+        return None
+    if not answer:
+        return None
+    try:
+        choice = int(answer)
+    except ValueError:
+        return None
+    if not 1 <= choice <= len(candidates):
+        return None
+    return candidates[choice - 1]
+
+
+def _download_weights(name: str) -> bool:
+    """Download weights for registered model ``name`` via the active engine.
+
+    Returns True when the weights are ready to serve. A missing engine or
+    a kind mismatch is a yellow warning (returns False) - the registration
+    is untouched. Real download failures print a red panel and exit 1.
+    """
+    from ...engines.manager import (
+        EngineManager,
+        EngineNotInstalledError,
+        KindMismatchError,
+    )
+    from ...server import registry
+
+    model = registry.get_model(name)
+    if model is None:
+        console.print(f"[bold red]error:[/] model '{name}' is not registered.")
+        raise typer.Exit(1)
+
+    manager = EngineManager()
+    try:
+        manager.download_model(model, on_event=_print_progress, choose=_pick_gguf)
+    except EngineNotInstalledError:
+        console.print(
+            "[yellow]no engine installed yet;[/] weights will download on first use "
+            "or via `outo-llms models download` after `outo-llms engine install`."
+        )
+        return False
+    except KindMismatchError as exc:
+        console.print(f"[yellow]download skipped:[/] {exc}")
+        return False
+    except RuntimeError as exc:
+        console.print(
+            Panel(
+                f"{exc}\n\nmodel '{name}' stays registered; fetch weights later with "
+                f"`outo-llms models download {name}`.",
+                title="download failed",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(1) from exc
+    return True
 
 
 @models_app.command("add")
@@ -30,8 +110,13 @@ def add(
         "-k",
         help="'hf' or 'gguf' (default: guessed from the source).",
     ),
+    no_download: bool = typer.Option(
+        False,
+        "--no-download",
+        help="Register only; download weights later via `models download`.",
+    ),
 ) -> None:
-    """Register a model in the registry."""
+    """Register a model, then download its weights for the active engine."""
     from ...server import db, registry
 
     resolved_source = source if source is not None else name
@@ -48,8 +133,33 @@ def add(
     except ValueError as exc:
         console.print(f"[bold red]error:[/] {exc}")
         raise typer.Exit(1) from exc
-    console.print(f"[green]model '{name}' registered[/] ({resolved_kind}: {resolved_source})")
-    console.print("weights are downloaded on the first request.")
+
+    if no_download:
+        console.print(
+            f"[green]model '{name}' registered (download skipped)[/] "
+            f"({resolved_kind}: {resolved_source})"
+        )
+        return
+    if _download_weights(name):
+        console.print(
+            f"[green]model '{name}' registered and downloaded[/] - ready to serve."
+        )
+    else:
+        console.print(
+            f"[green]model '{name}' registered[/] ({resolved_kind}: {resolved_source})"
+        )
+
+
+@models_app.command("download")
+def download(
+    name: str = typer.Argument(..., help="Registry name of the model to download."),
+) -> None:
+    """Download a registered model's weights now (idempotent via the HF cache)."""
+    from ...server import db
+
+    db.init_db()
+    if _download_weights(name):
+        console.print(f"[green]model '{name}' downloaded[/] - ready to serve.")
 
 
 @models_app.command("list")

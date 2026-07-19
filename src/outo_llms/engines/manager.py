@@ -15,6 +15,7 @@ Owns everything about an engine's presence on the machine:
 from __future__ import annotations
 
 import datetime as dt
+import os
 import socket
 import subprocess
 import sys
@@ -27,9 +28,38 @@ import httpx
 
 from ..core import config as config_mod
 from ..core import consent, paths, process
-from .base import ModelRef, adapter_names, get_adapter
+from .base import EngineAdapter, ModelRef, adapter_names, get_adapter
 
 _PIP_TAIL_LINES = 20
+
+_LIST_GGUF_SNIPPET = """\
+import sys
+
+from huggingface_hub import list_repo_files
+
+for path in list_repo_files(sys.argv[1]):
+    if path.endswith(".gguf"):
+        print(path)
+"""
+
+_DOWNLOAD_SNIPPET = """\
+import sys
+
+from huggingface_hub import snapshot_download
+
+repo_id = sys.argv[1]
+allow_patterns = [sys.argv[2]] if len(sys.argv) > 2 else None
+local_path = snapshot_download(repo_id=repo_id, allow_patterns=allow_patterns)
+print(f"weights ready at: {local_path}")
+"""
+
+
+class EngineNotInstalledError(RuntimeError):
+    """The active engine has no installed venv to download with."""
+
+
+class KindMismatchError(RuntimeError):
+    """The active engine cannot serve the model's kind."""
 
 
 def _base_url(port: int) -> str:
@@ -211,6 +241,75 @@ class EngineManager:
         self._model_path(name).unlink(missing_ok=True)
         consent.log_action("stop_engine", name)
 
+    # -- download ----------------------------------------------------------
+
+    def download_model(
+        self,
+        model: ModelRef,
+        *,
+        on_event: Callable[[str], None] | None = None,
+        choose: Callable[[list[str]], str | None] | None = None,
+    ) -> None:
+        """Download ``model``'s weights into the shared Hugging Face cache.
+
+        Uses the ``huggingface_hub`` package already present in the active
+        engine's venv - nothing is installed. Local-path sources need no
+        download. ``on_event`` receives every output line of the download
+        (tqdm progress included); ``choose`` picks one file when a bare
+        GGUF repo offers several, and returning None cancels.
+
+        Raises EngineNotInstalledError when the active engine is missing,
+        KindMismatchError when it cannot serve ``model.kind``, and
+        RuntimeError when listing or downloading fails.
+        """
+        name = self.current_name()
+        adapter = get_adapter(name)
+        if not self.is_installed(name):
+            raise EngineNotInstalledError(
+                f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
+            )
+        if not adapter.supports(model):
+            raise KindMismatchError(
+                f"engine '{name}' only serves {self._served_kinds(adapter)} models; "
+                "switch engines with `outo-llms engine use` or register with "
+                "a different kind"
+            )
+        if Path(model.source).exists():
+            consent.log_action("download_model", "local path, skipped")
+            return
+
+        python = self.venv_python(name)
+        repo = model.source
+        filename: str | None = None
+        if model.kind == "gguf":
+            if ":" in model.source:
+                repo, filename = model.source.split(":", 1)
+            else:
+                consent.announce("list .gguf files in the repo", model.source)
+                candidates = self._list_gguf_files(python, model.source)
+                if not candidates:
+                    raise RuntimeError(f"no .gguf files in repo {model.source!r}")
+                if len(candidates) == 1:
+                    filename = candidates[0]
+                else:
+                    if choose is None:
+                        listing = "\n".join(f"  - {candidate}" for candidate in candidates)
+                        raise RuntimeError(
+                            f"repo {model.source!r} contains multiple .gguf files:\n"
+                            f"{listing}\nre-run interactively or use --source repo:file"
+                        )
+                    filename = choose(candidates)
+                    if filename is None:
+                        raise RuntimeError("download cancelled")
+
+        target = f"{repo}:{filename}" if filename is not None else repo
+        consent.announce(f"download '{model.name}' with {adapter.display_name}", target)
+        argv = [str(python), "-c", _DOWNLOAD_SNIPPET, repo]
+        if filename is not None:
+            argv.append(filename)
+        self._run_streaming(argv, on_event, env=os.environ.copy(), label="model download")
+        consent.log_action("download_model", f"{name}:{model.source}")
+
     # -- internals -------------------------------------------------------
 
     @staticmethod
@@ -264,8 +363,40 @@ class EngineManager:
             port += 1
 
     @staticmethod
-    def _run_pip(argv: list[str], on_event: Callable[[str], None] | None) -> None:
-        """Stream a pip invocation, forwarding each line to ``on_event``."""
+    def _served_kinds(adapter: EngineAdapter) -> str:
+        """Human-readable list of the model kinds ``adapter`` can serve."""
+        kinds = [
+            kind
+            for kind in ("hf", "gguf")
+            if adapter.supports(ModelRef(name="", source="", kind=kind))
+        ]
+        return " or ".join(kinds) if kinds else "no"
+
+    @staticmethod
+    def _list_gguf_files(python: Path, repo: str) -> list[str]:
+        """Every ``*.gguf`` filename in HF repo ``repo``, via the venv python."""
+        lines = EngineManager._run_streaming(
+            [str(python), "-c", _LIST_GGUF_SNIPPET, repo],
+            None,
+            env=os.environ.copy(),
+            label="list repo files",
+        )
+        return [line for line in lines if line.endswith(".gguf")]
+
+    @staticmethod
+    def _run_streaming(
+        argv: list[str],
+        on_event: Callable[[str], None] | None,
+        *,
+        env: dict[str, str] | None = None,
+        label: str,
+    ) -> list[str]:
+        """Run ``argv``, forwarding each output line to ``on_event``.
+
+        stderr is merged into stdout. Returns every output line; raises
+        RuntimeError with the output tail on a non-zero exit.
+        """
+        lines: list[str] = []
         tail: deque[str] = deque(maxlen=_PIP_TAIL_LINES)
         with subprocess.Popen(
             argv,
@@ -273,16 +404,24 @@ class EngineManager:
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             text=True,
+            env=env,
         ) as proc:
             assert proc.stdout is not None  # guaranteed by stdout=PIPE
             for line in proc.stdout:
                 stripped = line.rstrip()
+                lines.append(stripped)
                 tail.append(stripped)
                 if on_event is not None:
                     on_event(stripped)
             returncode = proc.wait()
         if returncode != 0:
             raise RuntimeError(
-                f"pip install failed (exit {returncode}); last output:\n"
+                f"{label} failed (exit {returncode}); last output:\n"
                 + "\n".join(tail)
             )
+        return lines
+
+    @staticmethod
+    def _run_pip(argv: list[str], on_event: Callable[[str], None] | None) -> None:
+        """Stream a pip invocation, forwarding each line to ``on_event``."""
+        EngineManager._run_streaming(argv, on_event, label="pip install")
