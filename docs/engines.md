@@ -122,6 +122,8 @@ outo-llms models add tinyllama \
 
 Downloads need `huggingface-hub` inside the engine venv. New engine installs include it; if a venv predates that requirement, outo-llms announces it, installs `huggingface-hub` into the venv (logged in the action log), and retries once.
 
+When a picker selects one file out of a multi-file GGUF repo, the registry source is pinned to `repo:file` so the exact weights are unambiguous later. At serve time llama.cpp needs a local `--model` path, so outo-llms resolves HF sources through the cache automatically (instant for pre-downloaded weights); a bare repo with several `.gguf` files and no pinned file fails with the exact re-registration command.
+
 For a GGUF source, three selection modes are supported:
 
 * `repo:file` downloads exactly that file.
