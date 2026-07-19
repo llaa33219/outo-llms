@@ -18,24 +18,24 @@ src/outo_llms/
 │   ├── base.py             EngineAdapter contract, ModelRef, adapter registry
 │   ├── llamacpp.py         llama.cpp adapter and serve argv
 │   ├── vllm.py             vLLM adapter and serve argv
-│   └── manager.py          EngineManager: install, use, ensure_running, stop
+│   └── manager.py          EngineManager: install, use, download_model, ensure_running, stop
 ├── server/
 │   ├── __main__.py         uvicorn entry point: `python -m outo_llms.server`
 │   ├── app.py              FastAPI factory, lifespan, /healthz, /v1/status, /, static UI
 │   ├── ui/
 │   │   └── static/         dependency-free SPA assets served at / and /ui/<name>
 │   ├── db.py               SQLite connection, schema, init_db, utcnow
-│   ├── accounts.py         users, workspaces, key issue/revoke/verify
+│   ├── accounts.py         users (with password hashes), sessions, workspaces, key issue/revoke/verify
 │   ├── registry.py         model registry CRUD
 │   ├── usage.py            usage record and aggregate summary
 │   ├── schemas.py          Pydantic v2 request and response models
-│   ├── deps.py             OpenAI-style error helper, WorkspaceDep auth dependency
+│   ├── deps.py             OpenAI-style error helper, SessionDep and ApiKeyDep auth dependencies
 │   ├── proxy.py            OpenAI-compatible proxy with usage accounting
 │   └── routes/
-│       ├── account.py      POST /v1/account/signup, GET /v1/account/me
+│       ├── account.py      signup, login, logout, password, me
 │       ├── workspaces.py   POST /v1/workspaces, GET /v1/workspaces
 │       ├── keys.py         POST/GET /v1/workspaces/{name}/keys, DELETE /v1/keys/{key_id}
-│       └── usage.py        GET /v1/usage
+│       └── usage.py        GET /v1/usage (with optional ?workspace=)
 └── cli/
     ├── app.py              Typer application, command registration
     └── commands/
@@ -46,7 +46,7 @@ src/outo_llms/
         ├── status.py       outo-llms status
         ├── reset.py        outo-llms reset
         ├── version.py      outo-llms version
-        ├── models.py       outo-llms models add/list/remove
+        ├── models.py       outo-llms models add/download/list/remove
         └── engine.py       outo-llms engine list/use/install/status
 ```
 
@@ -69,8 +69,8 @@ client                outo-llms API server                EngineManager       en
   │ HTTP /v1/chat/...        │                                  │                    │
   │ (Bearer outo_sk_...)     │                                  │                    │
   │ ────────────────────────▶                                  │                    │
-  │                          │ require_workspace():            │                    │
-  │                          │   parse header, verify key      │                    │
+  │                          │ ApiKeyDep():                    │                    │
+  │                          │   parse header, verify SHA-256  │                    │
   │                          │   → WorkspaceContext            │                    │
   │                          │ resolve model in registry       │                    │
   │                          │ ensure_running(model_ref) ─────▶│                    │
@@ -91,16 +91,21 @@ client                outo-llms API server                EngineManager       en
 
 The root request, `GET /`, serves the dependency-free GUI from `server/ui/static/`; named assets are available at `/ui/<name>`, and Swagger UI remains at `/docs`.
 
+Two auth dependencies live in `server/deps.py`:
+
+* `ApiKeyDep` accepts an `outo_sk_` Bearer only and resolves to a `WorkspaceContext`. It is used by `POST /v1/chat/completions`, `POST /v1/completions`, and `GET /v1/models`.
+* `SessionDep` accepts an `outo_st_` Bearer only and resolves to the calling user. It is used by `GET /v1/status`, `POST /v1/account/logout`, `POST /v1/account/password`, `GET /v1/account/me`, every `workspaces` and `keys` route, `GET /v1/usage`, and `GET /v1/models` (which accepts either).
+
+The OpenAI-shaped error helper is used for every error response, including `404`, so the wire shape stays consistent across both auth styles.
+
 For `chat/completions` and `completions`, the proxy does the following:
 
 1. Parse and validate the JSON body.
 2. Resolve the `model` field against the registry. Missing `model` is HTTP `400`. Unknown model is HTTP `404` with `code: "model_not_found"`.
-3. Call `EngineManager.ensure_running(model_ref)` to start or reuse the engine. A missing engine installation or an unsupported kind is HTTP `502`.
+3. Call `EngineManager.ensure_running(model_ref)` to start or reuse the engine. The weights are already in the shared HF cache because `models add` downloaded them at registration. A missing engine installation or an unsupported kind is HTTP `502`.
 4. Forward the request to the upstream OpenAI-compatible URL on `127.0.0.1:<engine-port>`.
 5. For non-streaming responses, parse JSON, read `usage.prompt_tokens` and `usage.completion_tokens`, and record a usage row.
 6. For streaming responses, set `stream_options.include_usage: true`, stream SSE bytes, then inspect the assembled text for a usage-bearing event and record usage best effort.
-
-The same dependency authenticates every authenticated route. Errors return through the OpenAI-style error helper in `server/deps.py`.
 
 ## Process model
 
@@ -110,18 +115,20 @@ shell
     └── python -m outo_llms.server        (API server, detached via start_new_session=True)
         ├── uvicorn loop
         │   ├── /healthz, /, /ui/<name>, /docs
-        │   ├── /v1/account/signup, /v1/account/me
+        │   ├── /v1/account/{signup,login,logout,password,me}
         │   ├── /v1/workspaces, /v1/workspaces/{name}/keys
         │   ├── /v1/keys/{key_id}
         │   ├── /v1/usage, /v1/status
         │   └── /v1/models, /v1/chat/completions, /v1/completions
-        └── EngineManager.ensure_running on demand
-            └── python -m llama_cpp.server (or vllm.entrypoints.openai.api_server)
+        ├── EngineManager.ensure_running on demand
+        │   └── python -m llama_cpp.server (or vllm.entrypoints.openai.api_server)
+        └── EngineManager.download_model invoked by the CLI at registration time
+            └── huggingface_hub.snapshot_download inside the active engine's venv
 ```
 
 The API server is a detached process with output redirected to `data/logs/server.log`. Its PID is stored in `data/server.pid`. `outo-llms stop` reads the PID file, sends SIGTERM, waits for the process to exit, and sends SIGKILL if needed.
 
-Engine processes follow the same pattern with PID, port, and model name written directly under `data/engines/`. `EngineManager` reuses a running engine when the same model is requested, and it stops and restarts the engine when a different model is requested or when a stale PID is detected.
+Engine processes follow the same pattern with PID, port, and model name written directly under `data/engines/`. `EngineManager` reuses a running engine when the same model is requested, and it stops and restarts the engine when a different model is requested or when a stale PID is detected. `EngineManager.download_model` is invoked by the CLI's `models add` and `models download` commands, not by the proxy; it runs `huggingface_hub.snapshot_download` inside the active engine's isolated venv and writes weights into the shared Hugging Face cache.
 
 The `__main__.py` for `outo_llms.server` calls `uvicorn.run(...)` with the configured host and port. If HTTPS is enabled, it asks `core/certs.py` for a CA-signed pair and passes them to Uvicorn.
 
@@ -129,16 +136,18 @@ The `__main__.py` for `outo_llms.server` calls `uvicorn.run(...)` with the confi
 
 * **Adding an engine.** Create a new module under `src/outo_llms/engines/` with a class that extends `EngineAdapter`. Add its name to `adapter_names()` and the lookup in `get_adapter()`. The manager, server, and CLI pick it up automatically.
 * **Adding a CLI command.** Create a new module under `src/outo_llms/cli/commands/` with a Typer function. Register it in `src/outo_llms/cli/app.py`. For a command group, create a Typer app and use `app.add_typer`.
-* **Adding an HTTP route.** Create a new module under `src/outo_llms/server/routes/` with a router. Include it in `src/outo_llms/server/app.py`. Use the `WorkspaceDep` dependency for authenticated routes and the `openai_error` helper for OpenAI-style error responses.
+* **Adding an HTTP route.** Create a new module under `src/outo_llms/server/routes/` with a router. Include it in `src/outo_llms/server/app.py`. Use the `SessionDep` dependency for management routes (account, workspaces, keys, usage, status), the `ApiKeyDep` dependency for inference routes (chat/completions, completions), and the `openai_error` helper for OpenAI-style error responses. `GET /v1/models` is the one route that accepts either.
 * **Adding configuration.** Extend a dataclass in `src/outo_llms/core/config.py`. The loader falls back to defaults for missing keys, so older `config.json` files still work.
 
 The [development guide](development.md) walks through each extension in detail.
 
 ## Data and persistence
 
-SQLite is the only database. The schema covers five tables: `users`, `workspaces`, `api_keys`, `models`, and `usage`. The schema is created by `db.init_db()` from a single `CREATE TABLE IF NOT EXISTS` script. All timestamps are UTC ISO-8601 strings. Foreign keys are enabled per connection. Queries use parameter binding.
+SQLite is the only database. The schema covers six tables: `users` (with a `password_hash` column holding a PBKDF2-HMAC-SHA256 hash and per-user salt), `workspaces`, `api_keys`, `sessions` (with `token_hash` and `expires_at`), `models`, and `usage`. The schema is created by `db.init_db()` from a single `CREATE TABLE IF NOT EXISTS` script. All timestamps are UTC ISO-8601 strings. Foreign keys are enabled per connection. Queries use parameter binding.
 
-The `EngineManager` keeps no in-memory state between calls. All state lives on disk: `config.json`, engine marker files, engine PID, port, model files, the database, the action log, and engine and server logs.
+Sessions are issued at signup and at every successful login, last 14 days, and are revoked by `POST /v1/account/logout`, by `POST /v1/account/password` (which revokes all of the user's sessions), or by expiry. Expired sessions are rejected on every request and are purged in the background.
+
+The `EngineManager` keeps no in-memory state between calls. All state lives on disk: `config.json`, engine marker files, engine PID, port, model files, the database, the action log, engine and server logs, and the shared Hugging Face model cache that weights are written into at registration time.
 
 ## What does not change
 

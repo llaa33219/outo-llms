@@ -100,7 +100,7 @@ outo-llms models add tinyllama \
   --kind gguf
 ```
 
-A local path is detected with the filesystem. If the source ends in `.gguf` or points to an existing path, `models add` guesses `gguf` when `--kind` is omitted.
+A local path is detected with the filesystem. If the source ends in `.gguf` or points to an existing path, `models add` guesses `gguf` when `--kind` is omitted. A local path skips the download step and the engine reads it from disk at serve time.
 
 ### vLLM and Hugging Face
 
@@ -112,7 +112,30 @@ outo-llms models add tinyllama \
   --kind hf
 ```
 
-If a model is gated, provide `HF_TOKEN` in the environment inherited by the server and engine process before the first request. See [Installation](installation.md).
+## Model downloads
+
+> **Breaking change in 0.3.0.** `outo-llms models add` now downloads the
+> weights immediately into the shared Hugging Face cache. The first inference
+> request no longer has to fetch them.
+
+`outo-llms models add` runs the active engine's isolated venv and calls `huggingface_hub.snapshot_download` (for `hf` sources) or pulls a single file (for `repo:file` GGUF sources) into the standard shared cache at `~/.cache/huggingface`. Progress is streamed to the terminal. Subsequent `models add` and `models download` calls for the same files hit the cache and are no-ops; only missing files are fetched.
+
+For a GGUF source, three selection modes are supported:
+
+* `repo:file` downloads exactly that file.
+* A bare `repo` containing a single `.gguf` uses that file automatically.
+* A bare `repo` containing several `.gguf` files prompts an interactive numbered picker. Non-interactive runs fail with the file list and the `--source repo:file` hint so the caller can re-run with an explicit file.
+
+If no engine is installed or the active engine does not serve the model kind, registration still succeeds and the command prints a warning. The weights can be fetched later with `outo-llms models download <name>`. The download command is idempotent: it reuses everything already in the cache.
+
+If a Hugging Face repository is gated, set `HF_TOKEN` in the environment inherited by the CLI before running `models add` (or `models download`):
+
+```bash
+export HF_TOKEN="hf_your_token"
+outo-llms models add gated-model --source 'org/repo' --kind hf
+```
+
+The CLI does not put this token in `config.json`, the SQLite database, or the action log. The `huggingface_hub` call inside the engine venv reads it from the environment. See [Installation](installation.md) for the broader access-token workflow.
 
 ## Serving arguments
 
@@ -126,7 +149,7 @@ Any strings in `engine.extra_args` from `config.json` are appended to the select
 
 ## One model at a time
 
-The active engine serves one registered model at a time. The first request for a model starts that model. If a later request names a different registered model, `EngineManager.ensure_running()` stops the current engine process, selects a free port at or above the adapter's default, starts the new model, and waits for its upstream `/v1/models` endpoint to respond.
+The active engine serves one registered model at a time. The first request for a model starts that model. Because `models add` puts the weights in the shared HF cache at registration time, the cold start is only the engine process, not a download. If a later request names a different registered model, `EngineManager.ensure_running()` stops the current engine process, selects a free port at or above the adapter's default, starts the new model, and waits for its upstream `/v1/models` endpoint to respond.
 
 A request for the same model reuses the running process. The managed API server remains on its configured host and port while the internal engine port can change if the preferred port is occupied.
 

@@ -6,50 +6,73 @@ Set common shell variables for the examples:
 
 ```bash
 BASE_URL="https://<your-server-ip-or-domain>"
-API_KEY="outo_sk_<key-created-by-signup>"
+SESSION_TOKEN="outo_st_<token-from-login-or-signup>"
+API_KEY="outo_sk_<key-returned-at-signup>"
 ```
 
 ## Authentication
 
-Signup is the only account endpoint that is open. All other `/v1` endpoints require:
+> **Breaking change in 0.3.0.** outo-llms now uses two distinct credentials:
+> a **session token** for account management and a **workspace API key** for
+> inference. Older versions accepted only an `outo_sk_` API key for every
+> authenticated route.
 
-```http
-Authorization: Bearer outo_sk_...
-```
+Two Bearer credential types are in play after signup or login:
 
-The key resolves to one workspace context. Workspace, key, usage, model, and proxy requests are evaluated in that authenticated context. A missing, malformed, invalid, or revoked key returns HTTP `401`.
+| Credential | Prefix | Purpose | Lifetime |
+| --- | --- | --- | --- |
+| Session token | `outo_st_` | Account and workspace management: `me`, `login`, `logout`, `password`, `workspaces`, `workspaces/{name}/keys`, `keys/{id}`, `usage`, `status`. Also accepted by `GET /v1/models`. | 14 days. Stored as a SHA-256 hash; the plaintext is shown only at creation. |
+| API key | `outo_sk_` | Inference on behalf of one workspace: `POST /v1/chat/completions`, `POST /v1/completions`. Also accepted by `GET /v1/models`. | Revoked explicitly; never auto-expires. Stored as a SHA-256 hash. |
 
-Application errors use an OpenAI-style error object inside FastAPI's `detail` field:
+Both are sent in the standard `Authorization: Bearer <value>` header. A missing, malformed, invalid, or revoked credential returns HTTP `401`.
+
+Which endpoint takes which credential:
+
+| Endpoint | Session `outo_st_` | API key `outo_sk_` |
+| --- | --- | --- |
+| `GET /v1/status` | yes | no |
+| `POST /v1/account/signup`, `POST /v1/account/login` | open (no auth) | open (no auth) |
+| `POST /v1/account/logout` | yes | no |
+| `POST /v1/account/password` | yes | no |
+| `GET /v1/account/me` | yes | no |
+| `POST /v1/workspaces`, `GET /v1/workspaces` | yes | no |
+| `POST/GET /v1/workspaces/{name}/keys`, `DELETE /v1/keys/{id}` | yes | no |
+| `GET /v1/usage` | yes | no |
+| `GET /v1/models` | yes | yes (dual auth) |
+| `POST /v1/chat/completions` | no | yes |
+| `POST /v1/completions` | no | yes |
+
+Account signup also returns both credentials in the response body, so a fresh client can use the `outo_sk_` key for inference and the `outo_st_` token for management in the same shell.
+
+Every error response from the API, including `404`, uses the OpenAI-style shape:
 
 ```json
 {
-  "detail": {
-    "error": {
-      "message": "invalid or revoked API key",
-      "type": "invalid_request_error"
-    }
+  "error": {
+    "message": "invalid or revoked credential",
+    "type": "invalid_request_error"
   }
 }
 ```
 
-Some errors include a `code`, such as `model_not_found`. Request validation errors produced by FastAPI can use its standard validation response.
+Some errors include a `code`, such as `model_not_found`. Request validation errors produced by FastAPI use its standard validation response.
 
 ## Status
 
 ### `GET /v1/status`
 
-Returns the authenticated server configuration, active engine state, and aggregate user, workspace, and model counts. It requires the same Bearer key authentication as every other authenticated `/v1` endpoint. A missing, malformed, invalid, or revoked key returns HTTP `401`.
+Returns the authenticated server configuration, active engine state, and aggregate user, workspace, and model counts. It requires a session token Bearer. A missing, malformed, invalid, or revoked token returns HTTP `401`.
 
 ```bash
 curl -s "$BASE_URL/v1/status" \
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer $SESSION_TOKEN"
 ```
 
 Response JSON, HTTP `200`:
 
 ```json
 {
-  "version": "0.2.4",
+  "version": "0.3.0",
   "server": {
     "host": "0.0.0.0",
     "port": 443,
@@ -77,24 +100,32 @@ The `pid`, `model`, `port`, and `base_url` fields are `null` when the engine has
 
 ## Account
 
+> **Breaking change in 0.3.0.** Signup and login now take a password. The
+> response returns both an `outo_sk_` API key (shown once, for inference) and
+> an `outo_st_` session token (14 days, for management). Legacy accounts
+> created before 0.3.0 have no password and cannot log in; their existing API
+> keys keep working for inference, and a fresh signup or `outo-llms reset`
+> produces a working account.
+
 ### `POST /v1/account/signup`
 
-Creates a user, the user's `default` workspace, and the first API key. This endpoint is open and does not require an Authorization header.
+Creates a user, the user's `default` workspace, the first API key, and the first session token. This endpoint is open and does not require an Authorization header.
 
 Request JSON:
 
 ```json
 {
-  "username": "me"
+  "username": "me",
+  "password": "correct horse battery staple"
 }
 ```
 
-`username` is required and must be between 1 and 64 characters.
+`username` is required and must be between 1 and 64 characters. `password` is required and must be at least 8 characters.
 
 ```bash
 curl -s -X POST "$BASE_URL/v1/account/signup" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"me"}'
+  -d '{"username":"me","password":"correct horse battery staple"}'
 ```
 
 Response JSON, HTTP `200`:
@@ -104,19 +135,107 @@ Response JSON, HTTP `200`:
   "user_id": 1,
   "username": "me",
   "workspace": "default",
-  "api_key": "outo_sk_<random-value>"
+  "api_key": "outo_sk_<random-value>",
+  "session_token": "outo_st_<random-value>"
 }
 ```
 
-The plaintext key is returned only at creation time. A duplicate username returns HTTP `409`.
+The plaintext `api_key` and `session_token` are returned only at creation time. Save them both: the API key is used for inference, the session token for account management. A duplicate username returns HTTP `409`.
+
+### `POST /v1/account/login`
+
+Exchanges a username and password for a fresh session token.
+
+Request JSON:
+
+```json
+{
+  "username": "me",
+  "password": "correct horse battery staple"
+}
+```
+
+```bash
+curl -s -X POST "$BASE_URL/v1/account/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"me","password":"correct horse battery staple"}'
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "session_token": "outo_st_<random-value>",
+  "user_id": 1,
+  "username": "me",
+  "workspaces": [
+    {
+      "id": 1,
+      "name": "default",
+      "created_at": "2026-07-18T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+Wrong credentials return a generic HTTP `401` with the same body shape as other errors, so the endpoint cannot be used for username enumeration. The plaintext session token is returned only at creation time.
+
+### `POST /v1/account/logout`
+
+Revokes the calling session token. Requires a session Bearer. Revocation makes the token fail authentication on every subsequent call.
+
+```bash
+curl -s -X POST "$BASE_URL/v1/account/logout" \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "revoked": true
+}
+```
+
+### `POST /v1/account/password`
+
+Changes the calling user's password and revokes every active session token for that user. The user is signed out of every device and must log in again. API keys are not affected.
+
+Request JSON:
+
+```json
+{
+  "current_password": "correct horse battery staple",
+  "new_password": "new pass phrase here"
+}
+```
+
+`new_password` must be at least 8 characters.
+
+```bash
+curl -s -X POST "$BASE_URL/v1/account/password" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"current_password":"correct horse battery staple","new_password":"new pass phrase here"}'
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "changed": true
+}
+```
+
+A wrong `current_password` returns HTTP `401`.
 
 ### `GET /v1/account/me`
 
-Returns the authenticated user's identity and all workspaces owned by that user.
+Returns the authenticated user's identity and all workspaces owned by that user. Requires a session Bearer.
 
 ```bash
 curl -s "$BASE_URL/v1/account/me" \
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer $SESSION_TOKEN"
 ```
 
 Response JSON, HTTP `200`:
@@ -153,7 +272,7 @@ Request JSON:
 
 ```bash
 curl -s -X POST "$BASE_URL/v1/workspaces" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"name":"experiments"}'
 ```
@@ -176,7 +295,7 @@ Lists every workspace owned by the authenticated user.
 
 ```bash
 curl -s "$BASE_URL/v1/workspaces" \
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer $SESSION_TOKEN"
 ```
 
 Response JSON, HTTP `200`:
@@ -198,6 +317,11 @@ Response JSON, HTTP `200`:
 
 ## API keys
 
+> **API keys are inference-only credentials in 0.3.0.** They authenticate
+> `POST /v1/chat/completions` and `POST /v1/completions` (and `GET /v1/models`)
+> on behalf of one workspace. They do not authenticate workspace management,
+> usage, account, or status endpoints; those require a session token.
+
 ### `POST /v1/workspaces/{name}/keys`
 
 Creates a key for a workspace owned by the authenticated user. The path `name` is the workspace name, not its numeric id.
@@ -214,7 +338,7 @@ Request JSON:
 
 ```bash
 curl -s -X POST "$BASE_URL/v1/workspaces/experiments/keys" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"label":"local development"}'
 ```
@@ -237,7 +361,7 @@ Lists key metadata for an owned workspace. It never returns plaintext keys or st
 
 ```bash
 curl -s "$BASE_URL/v1/workspaces/experiments/keys" \
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer $SESSION_TOKEN"
 ```
 
 Response JSON, HTTP `200`:
@@ -259,7 +383,7 @@ Revokes a key belonging to any workspace owned by the authenticated user. Revoca
 
 ```bash
 curl -s -X DELETE "$BASE_URL/v1/keys/1" \
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer $SESSION_TOKEN"
 ```
 
 Response JSON, HTTP `200`:
@@ -276,18 +400,29 @@ A key that is not owned by the user, or does not exist, returns HTTP `404`.
 
 ### `GET /v1/usage`
 
-Returns aggregate usage for the workspace associated with the current API key. Usage is grouped by model.
+Returns aggregate usage for the caller. Requires a session Bearer. Usage is grouped by model.
+
+An optional `?workspace=<name>` query parameter selects one of the caller's workspaces. The named workspace must belong to the authenticated user; asking about someone else's workspace returns HTTP `404`. Without the parameter, the response aggregates across every workspace owned by the caller and the `workspace` field in the response is the string `all`.
+
+Aggregate across every workspace owned by the caller:
 
 ```bash
 curl -s "$BASE_URL/v1/usage" \
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer $SESSION_TOKEN"
 ```
 
-Response JSON, HTTP `200`:
+Scope to one workspace:
+
+```bash
+curl -s "$BASE_URL/v1/usage?workspace=experiments" \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
+Response JSON, HTTP `200` (aggregate form):
 
 ```json
 {
-  "workspace": "default",
+  "workspace": "all",
   "total_requests": 1,
   "total_tokens": 42,
   "by_model": [
@@ -302,13 +437,22 @@ Response JSON, HTTP `200`:
 }
 ```
 
+The `workspace` field echoes the chosen scope, either `all` or the single workspace name.
+
 For non-streaming proxy responses, accounting reads the upstream response's `usage.prompt_tokens` and `usage.completion_tokens` fields. Missing values are treated as zero. For streaming responses, the proxy adds `stream_options.include_usage: true` to the upstream request, forwards the stream, and records usage from the final usage-bearing SSE event when one is returned. Streaming accounting is best effort and never breaks the stream.
 
 ## Models
 
 ### `GET /v1/models`
 
-Lists registered models in the OpenAI `list` shape. This is the registry exposed by outo-llms, not a direct listing from the engine.
+Lists registered models in the OpenAI `list` shape. This is the registry exposed by outo-llms, not a direct listing from the engine. Accepts either a session Bearer or an API key Bearer, so both GUI and inference clients can call it with the credential they already hold.
+
+```bash
+curl -s "$BASE_URL/v1/models" \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
+Or with an API key:
 
 ```bash
 curl -s "$BASE_URL/v1/models" \
@@ -432,8 +576,8 @@ Serves the built-in web GUI on the same host and port as the API, for example `h
 
 The top bar contains four views: `Models`, `Workspaces`, `Server status`, and `Profile`.
 
-* **Profile.** The GUI stores the API key in the browser's `localStorage`. `Log in` accepts an existing key and validates it with `GET /v1/account/me`. `Sign up` accepts a username, creates an account, and displays the new API key once with a copy button. `Log out` clears the stored key.
-* **Models.** Shows a read-only list of registered models. Add and remove operations remain CLI-only: `outo-llms models add`, `outo-llms models list`, and `outo-llms models remove`.
+* **Profile.** The GUI stores the session token in the browser's `localStorage`. `Sign up` accepts a username and password (minimum 8 characters), creates an account, and displays the new `outo_st_` session token and `outo_sk_` API key once with copy buttons. `Log in` accepts an existing username and password, validates them with `POST /v1/account/login`, and stores the returned session token. `Log out` posts to `POST /v1/account/logout` and clears the stored token. The GUI never stores or displays the password again after signup or login.
+* **Models.** Shows a read-only list of registered models. Add, download, and remove operations remain CLI-only: `outo-llms models add`, `outo-llms models download`, `outo-llms models list`, and `outo-llms models remove`.
 * **Workspaces.** Lists and creates workspaces. For each workspace, the GUI lists, creates, and revokes API keys. New keys are shown once with a copy button. It also shows the usage summary for the workspace associated with the current key.
 * **Server status.** Shows the version, server host, port, HTTPS setting, domain, engine installed and running state, engine model and port, and user, workspace, and model counts.
 

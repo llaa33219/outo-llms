@@ -21,7 +21,7 @@ BASE_URL="https://203.0.113.10"
 * `pip install outo-llms` (or `pipx install outo-llms`).
   * Expected: the command exits with status `0`. No traceback. The package is installed.
 * `outo-llms version`.
-  * Expected: prints `outo-llms 0.2.7` (or the version you installed).
+  * Expected: prints `outo-llms 0.3.0` (or the version you installed).
 
 ## Run setup
 
@@ -32,29 +32,53 @@ BASE_URL="https://203.0.113.10"
 
 ## Sign up
 
-* `curl -ks -X POST "$BASE_URL/v1/account/signup" -H 'Content-Type: application/json' -d '{"username":"me"}'`.
-  * Expected: HTTP `200` with a JSON body that includes `user_id`, `username: "me"`, `workspace: "default"`, and `api_key` starting with `outo_sk_`.
-  * Save the value: `API_KEY="outo_sk_<paste-the-key>"`.
-* `curl -ks "$BASE_URL/v1/account/me" -H "Authorization: Bearer $API_KEY"`.
+* `curl -ks -X POST "$BASE_URL/v1/account/signup" -H 'Content-Type: application/json' -d '{"username":"me","password":"correct horse battery staple"}'`.
+  * Expected: HTTP `200` with a JSON body that includes `user_id`, `username: "me"`, `workspace: "default"`, an `api_key` starting with `outo_sk_`, and a `session_token` starting with `outo_st_`. Save both values: `API_KEY="outo_sk_<paste-the-key>"` and `SESSION_TOKEN="outo_st_<paste-the-token>"`.
+* `curl -ks "$BASE_URL/v1/account/me" -H "Authorization: Bearer $SESSION_TOKEN"`.
   * Expected: HTTP `200` with the same `user_id` and `username`, and a `workspaces` array containing one entry for `default`.
+* `curl -ks "$BASE_URL/v1/account/me" -H "Authorization: Bearer $API_KEY"`.
+  * Expected: HTTP `401`. Management endpoints require a session token, not an API key. The body uses the OpenAI-style error shape.
 * `curl -ks "$BASE_URL/v1/account/me"`.
   * Expected: HTTP `401`. The body uses the OpenAI-style error shape.
+
+## Log in and rotate credentials
+
+* `curl -ks -X POST "$BASE_URL/v1/account/login" -H 'Content-Type: application/json' -d '{"username":"me","password":"correct horse battery staple"}'`.
+  * Expected: HTTP `200` with a fresh `session_token` (different from the signup one), the `user_id`, the `username`, and the `workspaces` array. Save it: `SESSION_TOKEN="outo_st_<paste-the-new-token>"`.
+* `curl -ks -X POST "$BASE_URL/v1/account/login" -H 'Content-Type: application/json' -d '{"username":"me","password":"wrong password"}'`.
+  * Expected: HTTP `401`. The body is the generic OpenAI-style error, not a different message for wrong-username vs wrong-password.
+* `curl -ks -X POST "$BASE_URL/v1/account/logout" -H "Authorization: Bearer $SESSION_TOKEN"`.
+  * Expected: HTTP `200` with `{"revoked": true}`.
+* `curl -ks "$BASE_URL/v1/account/me" -H "Authorization: Bearer $SESSION_TOKEN"`.
+  * Expected: HTTP `401`. The revoked session no longer authenticates. Re-login to continue.
+* `curl -ks -X POST "$BASE_URL/v1/account/password" -H "Authorization: Bearer $SESSION_TOKEN" -H 'Content-Type: application/json' -d '{"current_password":"correct horse battery staple","new_password":"another pass phrase"}'`.
+  * Expected: HTTP `200` with `{"changed": true}`. Every active session for the user is now revoked; logging in again with the new password succeeds.
 
 ## Register and use a model
 
 * `outo-llms models add tinyllama --source 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF:Q4_K_M' --kind gguf`.
-  * Expected: prints `model 'tinyllama' registered` and notes that weights are downloaded on the first request.
+  * Expected: streams download progress from `huggingface_hub` as the file is fetched into the shared cache (`~/.cache/huggingface`), then prints `model 'tinyllama' registered`. The first inference request no longer has to download weights.
+* `outo-llms models add tinyllama --source 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF' --kind gguf` (no `:file`, no `--no-download`, with several `.gguf` files in the repo).
+  * Expected: an interactive numbered picker listing each `.gguf`. Pick one by number to download that file, or run with a non-interactive stdin to see the file list and the `--source repo:file` hint instead.
+* `outo-llms models add tinyllama --source 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF:Q4_K_M' --kind gguf --no-download`.
+  * Expected: registration succeeds without downloading. `outo-llms models download tinyllama` later fetches the file into the same cache; rerunning `download` is idempotent.
 * `outo-llms models list`.
   * Expected: a table with one row showing `tinyllama`, `gguf`, the source, and a timestamp.
 * `curl -ks -X POST "$BASE_URL/v1/chat/completions" -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' -d '{"model":"tinyllama","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`.
-  * Expected: HTTP `200`. The body has `choices[0].message.content` with text from the model. The first request can take several minutes while llama.cpp starts and the GGUF weights download.
+  * Expected: HTTP `200`. The body has `choices[0].message.content` with text from the model. Because the weights were pre-downloaded at registration, the first request only waits for llama.cpp to start the engine.
 * `curl -ks "$BASE_URL/v1/models" -H "Authorization: Bearer $API_KEY"`.
   * Expected: HTTP `200` with `object: "list"` and a `data` array containing one entry for `tinyllama`.
+* `curl -ks "$BASE_URL/v1/models" -H "Authorization: Bearer $SESSION_TOKEN"`.
+  * Expected: same `200` response. `GET /v1/models` accepts either a session token or an API key.
 
 ## Inspect usage
 
-* `curl -ks "$BASE_URL/v1/usage" -H "Authorization: Bearer $API_KEY"`.
-  * Expected: HTTP `200`. The `workspace` field is `default`. `total_requests` is at least `1`. `by_model` contains an entry for `tinyllama` with non-zero `prompt_tokens` and `completion_tokens`.
+* `curl -ks "$BASE_URL/v1/usage" -H "Authorization: Bearer $SESSION_TOKEN"`.
+  * Expected: HTTP `200`. The `workspace` field is the string `all`. `total_requests` is at least `1`. `by_model` contains an entry for `tinyllama` with non-zero `prompt_tokens` and `completion_tokens`.
+* `curl -ks "$BASE_URL/v1/usage?workspace=default" -H "Authorization: Bearer $SESSION_TOKEN"`.
+  * Expected: HTTP `200`. The `workspace` field is `default`. Counts match the request that ran on that workspace.
+* `curl -ks "$BASE_URL/v1/usage?workspace=does-not-exist" -H "Authorization: Bearer $SESSION_TOKEN"`.
+  * Expected: HTTP `404` with the OpenAI-style error shape. The named workspace either does not exist or is not owned by the caller.
 * Send another completion with a different prompt and re-issue the usage request.
   * Expected: `total_requests` increments and token totals increase.
 
@@ -79,6 +103,7 @@ BASE_URL="https://203.0.113.10"
   * Expected: the model is registered.
 * Issue a completion against `hf-tinyllama` with the same API key.
   * Expected: the vLLM engine starts on its internal port (default `8613`), the request is forwarded, and `GET /v1/usage` now shows a row for `hf-tinyllama`.
+  * Note: switching engines does not retroactively affect previously registered models. `outo-llms models download hf-tinyllama` re-fetches with the new engine's HF cache if needed.
 
 ## Optional: loopback HTTPS
 
@@ -92,12 +117,16 @@ BASE_URL="https://203.0.113.10"
 
 * Open `https://<your-server-ip-or-domain>/` in a browser.
   * Expected: the dependency-free single-page GUI loads at the base URL. On a machine that has not installed `ca.crt`, the browser shows a certificate warning until the CA is trusted.
-* Open `Profile`, choose `Sign up`, enter a new username, and submit.
-  * Expected: the account is created, the new API key is displayed once with a copy button, and the key is saved in the browser. Copy and save the key before leaving the screen.
+* Open `Profile`, choose `Sign up`, enter a new username and a password (at least 8 characters), and submit.
+  * Expected: the account is created, the new session token and API key are displayed once with copy buttons, and the session token is saved in the browser. Copy and save both values before leaving the screen. The password is never displayed or stored after signup.
+* Open `Profile`, choose `Log out`.
+  * Expected: the stored session token is cleared. Subsequent requests fail with `401` until you log in again.
+* Open `Profile`, choose `Log in`, enter the same username and password.
+  * Expected: a new session token is fetched from `POST /v1/account/login` and stored. The rest of the GUI works again.
 * Open the `Models` view.
-  * Expected: the registered model list is visible and read-only. There are no model add or remove actions in the GUI; use `outo-llms models add`, `outo-llms models list`, or `outo-llms models remove` for those operations.
+  * Expected: the registered model list is visible and read-only. There are no model add, download, or remove actions in the GUI; use `outo-llms models add`, `outo-llms models download`, `outo-llms models list`, or `outo-llms models remove` for those operations.
 * Open the `Workspaces` view and create a workspace.
-  * Expected: the new workspace appears in the workspace list, and the current key's workspace usage summary is visible.
+  * Expected: the new workspace appears in the workspace list, and the usage summary for the workspaces owned by the current session is visible.
 * In the new workspace, create an API key, then revoke it.
   * Expected: the new key is displayed once with a copy button, appears in the workspace key list as active, and then appears as revoked after the revoke action. The revoked key no longer authenticates requests.
 * Open the `Server status` view.
@@ -106,7 +135,7 @@ BASE_URL="https://203.0.113.10"
 ## Swagger UI
 
 * Open `https://<your-server-ip-or-domain>/docs` in a browser.
-  * Expected: Swagger UI with the `account`, `workspaces`, `keys`, `usage`, and `proxy` route groups, including `GET /v1/status`.
+  * Expected: Swagger UI with the `account`, `workspaces`, `keys`, `usage`, and `proxy` route groups, including `GET /v1/status`. The `Authorize` button accepts an `outo_st_` session token; `outo_sk_` API keys work only on the endpoints that accept them.
 
 ## Reset
 

@@ -111,7 +111,7 @@ The exact files present depend on which engines and HTTPS options you use.
 
 ### What each location holds
 
-* `outo-llms.db` is the SQLite database. It contains users, workspaces, API key hashes, the model registry, and usage records.
+* `outo-llms.db` is the SQLite database. It contains users (with PBKDF2 password hashes), workspaces, API key hashes, session token hashes, the model registry, and usage records.
 * `server.pid` records the detached API server process id.
 * `engines/` contains isolated engine environments, installation markers, and the active engine's PID, port, and model state files.
 * `models/` is created as part of the managed data layout. The model registry itself is stored in SQLite. The upstream engine and its model-loading libraries determine where downloaded model caches are placed.

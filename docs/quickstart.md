@@ -42,7 +42,7 @@ The built-in web GUI is served at the same base URL as the API. Open it in a bro
 https://<your-server-ip-or-domain>/
 ```
 
-In the `Profile` menu, choose `Sign up`, enter a username, and submit the form. The GUI displays the new API key once with a copy button. Copy and save the key immediately. The GUI stores the key in the browser's `localStorage`, so you can use `Profile` > `Log in` later to paste an existing key, or `Log out` to clear it.
+In the `Profile` menu, choose `Sign up`, enter a username and a password (at least 8 characters), and submit the form. The GUI displays the new session token and API key once with copy buttons. Copy and save both values immediately. The GUI stores the session token in the browser's `localStorage` for later use, so you can use `Profile` > `Log in` with the same username and password to start a new session, or `Log out` to clear the stored token. The password is never stored in the browser.
 
 For API users who prefer curl, signup remains available as an open endpoint:
 
@@ -51,7 +51,7 @@ BASE_URL="https://203.0.113.10"
 
 curl -ks -X POST "$BASE_URL/v1/account/signup" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"me"}'
+  -d '{"username":"me","password":"correct horse battery staple"}'
 ```
 
 Example response shape:
@@ -61,19 +61,21 @@ Example response shape:
   "user_id": 1,
   "username": "me",
   "workspace": "default",
-  "api_key": "outo_sk_<random-value>"
+  "api_key": "outo_sk_<random-value>",
+  "session_token": "outo_st_<random-value>"
 }
 ```
 
-Set the returned value in your shell. If you signed up in the GUI, use the copied value instead. Replace the placeholder with the complete key, including the `outo_sk_` prefix:
+The response carries two credentials. Use the API key for inference (`POST /v1/chat/completions`, `POST /v1/completions`). Use the session token for everything else (`/v1/account/me`, `/v1/usage`, `/v1/workspaces`, `/v1/keys`, `/v1/status`). Set both in your shell. If you signed up in the GUI, use the copied values instead:
 
 ```bash
 API_KEY="outo_sk_<paste-the-key-from-signup>"
+SESSION_TOKEN="outo_st_<paste-the-token-from-signup>"
 ```
 
 ## 4. Register a GGUF model
 
-The registry name is the name clients send in the `model` field. With llama.cpp, the source can use Hugging Face `repo:file` syntax. This example selects the `Q4_K_M` file from the TinyLlama GGUF repository.
+The registry name is the name clients send in the `model` field. With llama.cpp, the source can use Hugging Face `repo:file` syntax. This example selects the `Q4_K_M` file from the TinyLlama GGUF repository. `models add` now downloads the weights immediately into the shared Hugging Face cache (`~/.cache/huggingface`) using the engine's isolated virtual environment, so the first inference request does not have to fetch them.
 
 ```bash
 outo-llms models add tinyllama \
@@ -81,7 +83,7 @@ outo-llms models add tinyllama \
   --kind gguf
 ```
 
-Weights are downloaded on the first request, not by `models add`. The first request can therefore take time while the engine starts and downloads the model.
+Progress is streamed to the terminal. With one matching `.gguf` file in the repository, the download is automatic. With several files, an interactive numbered picker asks which one to fetch; running non-interactively fails with a file list and the `--source repo:file` hint. If no engine is installed or the active engine does not serve the model kind, registration still succeeds and a warning notes that the weights can be fetched later with `outo-llms models download <name>`. A local `.gguf` path skips downloading. If the repository is gated, set `HF_TOKEN` in the environment before running `models add`.
 
 Check the registry if needed:
 
@@ -102,7 +104,7 @@ Use one setup path in a fresh installation. Switching engines later is covered i
 
 ## 5. Send the first chat completion
 
-Use the API key as a Bearer token. The proxy resolves `tinyllama` in the registry, starts the active engine on an internal loopback port if necessary, forwards the request, and returns the upstream OpenAI-style response. The trust store already trusts the local CA on the server, so no `-k` is needed; on other machines that have not installed `ca.crt`, pass `-k` until they do:
+Use the API key as a Bearer token. The proxy resolves `tinyllama` in the registry, starts the active engine on an internal loopback port if necessary, forwards the request, and returns the upstream OpenAI-style response. Because the weights are already in the cache from step 4, the first request does not wait on a download. The trust store already trusts the local CA on the server, so no `-k` is needed; on other machines that have not installed `ca.crt`, pass `-k` until they do:
 
 ```bash
 curl -ks "$BASE_URL/v1/chat/completions" \
@@ -120,18 +122,18 @@ The engine starts on demand. llama.cpp listens internally on port `8612` by defa
 
 ## 6. Inspect usage
 
-The proxy records the upstream response's `usage` token counts against the workspace associated with the API key.
+Usage management endpoints require the session token. The proxy records the upstream response's `usage` token counts against the calling workspace.
 
 ```bash
 curl -ks "$BASE_URL/v1/usage" \
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer $SESSION_TOKEN"
 ```
 
 Example response shape after one successful request:
 
 ```json
 {
-  "workspace": "default",
+  "workspace": "all",
   "total_requests": 1,
   "total_tokens": 42,
   "by_model": [
@@ -146,7 +148,7 @@ Example response shape after one successful request:
 }
 ```
 
-The actual token counts come from the engine response and will vary.
+The `workspace` field is the string `all` when no `?workspace=` query parameter is supplied. Pass `?workspace=<name>` to scope the response to one of your workspaces. The actual token counts come from the engine response and will vary.
 
 ## 7. Use the web GUI
 
@@ -158,10 +160,10 @@ https://<your-server-ip-or-domain>/
 
 The top bar provides four views:
 
-* **Models** lists registered models. This view is read-only. Register or remove models with the CLI commands `outo-llms models add`, `outo-llms models list`, and `outo-llms models remove`.
-* **Workspaces** lists and creates workspaces. For each workspace, you can list, create, and revoke API keys. New keys are shown once with a copy button. The view also shows the usage summary for the workspace associated with the current key.
+* **Models** lists registered models. This view is read-only. Register, download, or remove models with the CLI commands `outo-llms models add`, `outo-llms models download`, `outo-llms models list`, and `outo-llms models remove`.
+* **Workspaces** lists and creates workspaces. For each workspace, you can list, create, and revoke API keys. New keys are shown once with a copy button. The view also shows the usage summary for the workspace associated with the current session.
 * **Server status** shows the version, server host, port, HTTPS setting, domain, engine state, and user, workspace, and model counts.
-* **Profile** manages the current browser key. Use `Log in` to paste an existing key, `Sign up` to create an account and receive a key once, or `Log out` to clear the key from local storage.
+* **Profile** manages the current browser session. Use `Sign up` to create an account with a username and password, `Log in` to start a new session with the same credentials, or `Log out` to clear the session from local storage. The GUI never stores the password.
 
 The first visit loads with no certificate warning because the local CA is already trusted on this machine. On machines that have not installed `ca.crt`, browsers show a warning; install the CA from `data/certs/ca.crt` and the warning goes away. See [Security](security.md) for per-OS instructions. The Swagger UI is available at:
 

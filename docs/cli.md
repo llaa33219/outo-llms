@@ -1,6 +1,11 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.2.7`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.3.0`.
+
+> **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
+> account; signup is a separate, password-protected HTTP call. `models add`
+> now downloads weights immediately. See [Server API](server-api.md) and
+> [Quickstart](quickstart.md).
 
 ## `outo-llms setup`
 
@@ -45,13 +50,15 @@ outo-llms setup --host 0.0.0.0 --port 443 --domain api.example.com --engine vllm
 
 System effects include creating directories under the platformdirs config and data locations, writing configuration and database files, creating a venv, running pip inside that venv, creating the local CA and signing the server certificate, installing `ca.crt` into the system trust store via sudo on supported Linux systems (`update-ca-certificates` or `update-ca-trust`), running the Linux firewall tool via sudo when not root (`ufw` or `firewalld`), running `sudo setcap` when binding a privileged port, and starting a detached server process. Every setup step is announced. The setup plan and action log show the paths, selected values, and the exact commands run.
 
+`setup` does not create accounts. The first account is created with `POST /v1/account/signup`, which now takes a username and password and returns both an `outo_st_` session token and an `outo_sk_` API key. See [Server API](server-api.md) for the full flow.
+
 ## `outo-llms models`
 
 ```text
 outo-llms models [COMMAND]
 ```
 
-Manages the model registry in the local SQLite database. These commands do not download model weights. The engine downloads weights when the first request needs the model.
+Manages the model registry in the local SQLite database. By default, `models add` also fetches the weights into the shared Hugging Face cache (`~/.cache/huggingface`) using the active engine's isolated virtual environment, so the first inference request does not have to download them.
 
 ### `outo-llms models add`
 
@@ -59,7 +66,7 @@ Manages the model registry in the local SQLite database. These commands do not d
 outo-llms models add NAME [OPTIONS]
 ```
 
-Registers one model. `NAME` is the model identifier clients use in API requests.
+Registers one model. `NAME` is the model identifier clients use in API requests. By default, the command also downloads the weights and streams progress to the terminal.
 
 Options:
 
@@ -67,11 +74,12 @@ Options:
 | --- | --- | --- |
 | `--source`, `-s` | `NAME` | Hugging Face repository id or a local `.gguf` path. For llama.cpp, a `repo:file` source selects a file in a Hugging Face repository. |
 | `--kind`, `-k` | guessed from source | Model kind, either `hf` or `gguf`. If omitted, a source ending in `.gguf` or an existing path is treated as `gguf`; otherwise it is treated as `hf`. |
+| `--no-download` | download on registration | Skip the weight fetch and only insert the registry row. Use this for staged setups or when no engine is installed yet; `outo-llms models download NAME` fetches later. |
 
 Examples:
 
 ```bash
-# Hugging Face model for vLLM
+# Hugging Face model for vLLM (downloads the repo snapshot)
 outo-llms models add tinyllama \
   --source 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' \
   --kind hf
@@ -81,11 +89,40 @@ outo-llms models add tinyllama \
   --source 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF:Q4_K_M' \
   --kind gguf
 
-# Local GGUF path, with kind inferred from the path
+# Local GGUF path, with kind inferred from the path (no download)
 outo-llms models add local-model --source /path/to/model.gguf
+
+# Register without downloading, fetch later
+outo-llms models add tinyllama \
+  --source 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF:Q4_K_M' \
+  --kind gguf \
+  --no-download
 ```
 
+GGUF source handling:
+
+* `repo:file` downloads exactly that file.
+* A bare `repo` containing a single `.gguf` uses that file automatically.
+* A bare `repo` containing several `.gguf` files prompts an interactive numbered picker. A non-interactive run fails with the file list and the `--source repo:file` hint so the caller can re-run with an explicit file.
+* A local path skips downloading; the engine reads it from disk at serve time.
+
+If no engine is installed or the active engine does not serve the model kind, registration still succeeds and the command warns that the weights can be fetched later with `outo-llms models download`. For gated Hugging Face repositories, set `HF_TOKEN` in the environment before running the command. The engine subprocess inherits that environment.
+
 The command initializes the database and inserts one registry row. Model names must be unique. A duplicate name or invalid kind exits with an error.
+
+### `outo-llms models download`
+
+```text
+outo-llms models download NAME
+```
+
+Downloads (or re-downloads) the weights for an already-registered model into the shared Hugging Face cache. The operation is idempotent: a second run is a no-op against the cache and only fetches missing files.
+
+```bash
+outo-llms models download tinyllama
+```
+
+If the named model is not in the registry, the command exits with an error. To select a different file inside a repository, re-register with the right `--source repo:file` (or use the CLI to update the source) and run download again.
 
 ### `outo-llms models list`
 

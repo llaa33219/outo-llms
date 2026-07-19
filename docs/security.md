@@ -2,9 +2,28 @@
 
 outo-llms is designed for local or LAN deployments behind a single managed API server. This page summarizes the security boundaries it enforces, what it does not enforce, and how to operate it safely.
 
+## Credential model
+
+> **Breaking change in 0.3.0.** Accounts now use a username and password for
+> login. Signup and login issue a session token (`outo_st_`) for account
+> management in addition to the inference-only API key (`outo_sk_`). See
+> [Server API](server-api.md) for the full endpoint table.
+
+Three credentials live in the system:
+
+* **Password.** Set at signup (minimum 8 characters) and changed through `POST /v1/account/password`. Stored as a PBKDF2-HMAC-SHA256 hash with 600,000 iterations and a per-user random salt. Only the hash is persisted in the `users.password_hash` column. Plaintext passwords are never logged, returned by any endpoint, or written to the action log. Wrong password attempts on `POST /v1/account/login` return a generic `401` so the endpoint cannot be used for username enumeration.
+* **Session token.** Issued at signup and at every successful login. Prefix `outo_st_`. Used for every authenticated management endpoint: `account/me`, `account/logout`, `account/password`, `workspaces`, `workspaces/{name}/keys`, `keys/{id}`, `usage`, `status`, and `models`. Lifetime is 14 days. The plaintext is returned once at creation; only the SHA-256 hex digest is stored in the `sessions.token_hash` column with the user's id and an `expires_at` timestamp. Expired sessions are rejected on every request and are purged in the background.
+* **API key.** Prefix `outo_sk_`. Used for inference only: `POST /v1/chat/completions` and `POST /v1/completions`, plus `GET /v1/models`. Lifetime is indefinite until revoked. The plaintext is returned once at creation; only the SHA-256 hex digest is stored in the `api_keys.key_hash` column with the workspace it belongs to. Revocation sets a flag rather than removing the row.
+
+A missing, malformed, invalid, or revoked credential of either kind returns HTTP `401` with the OpenAI-style error shape.
+
+Setup does not create accounts. The first account comes from `POST /v1/account/signup`. `POST /v1/account/password` revokes every active session for the user at the moment the password changes, so a successful password change signs the user out of every device. API keys are not affected by password changes.
+
+**Legacy accounts.** Accounts created before 0.3.0 have no password. They cannot log in (login requires the password that was never set). Their pre-existing API keys keep working for inference, so existing client integrations do not break. To regain access to management endpoints, sign up again or run `outo-llms reset` for a clean state.
+
 ## API keys
 
-The server issues keys with the `outo_sk_` prefix, followed by 24 URL-safe random bytes. The plaintext value is returned to the requester only at creation time. Setup does not create accounts. The first account comes from `POST /v1/account/signup`.
+The server issues keys with the `outo_sk_` prefix, followed by 24 URL-safe random bytes. The plaintext value is returned to the requester only at creation time.
 
 For each key, only its SHA-256 hex digest is stored. The SQLite `api_keys.key_hash` column is the unique identifier. The `revoked` flag deactivates a key without removing its metadata. Plaintext keys are never logged, never returned by listing endpoints, and never written to the action log.
 
@@ -99,15 +118,17 @@ The implementation rule is: any code path that touches the system must go throug
 
 ## Things outo-llms does not do
 
-* It does not implement authentication for the web GUI assets at `/` or the health endpoint at `/healthz`. Both are open by design: the assets are static files and every `/v1` call the GUI makes still requires a valid API key.
+* It does not implement authentication for the web GUI assets at `/` or the health endpoint at `/healthz`. Both are open by design: the assets are static files and every `/v1` call the GUI makes still requires a valid session token or API key.
 * It does not implement rate limits, quota enforcement, or per-key rate metering. It only records token usage.
-* It does not encrypt the SQLite database, the configuration file, or the action log. The platform filesystem permissions are the protection.
+* It does not encrypt the SQLite database, the configuration file, or the action log. The platform filesystem permissions are the protection. The database holds password hashes (PBKDF2) and session and API-key hashes (SHA-256); none of those are reversible to plaintext.
 * It does not validate the TLS chain of upstream clients.
-* It does not implement token rotation. Issue a new key and revoke the old one when you need to rotate.
+* It does not implement automatic API-key rotation. Issue a new key and revoke the old one when you need to rotate.
+* It does not implement session revocation by user action other than `POST /v1/account/logout` and `POST /v1/account/password`. Sessions also expire after 14 days.
 
 ## Recommended practices
 
-* Treat `outo_sk_` keys as credentials. Store them in a password manager or in an environment variable, not in scripts shared with other users.
+* Treat `outo_st_` session tokens and `outo_sk_` API keys as credentials. Store them in a password manager or in an environment variable, not in scripts shared with other users.
+* The built-in web GUI stores the session token in `localStorage`, not the password. Treat any browser holding the token as signed in until you revoke the session with `POST /v1/account/logout` (or `POST /v1/account/password`).
 * Bind to `127.0.0.1` whenever possible. Use a reverse proxy if remote access is required, even when the default HTTPS deployment is in place.
 * Run setup without `--yes` until you understand the announcements, then consider `--yes` for reproducible deployments.
 * Periodically inspect the action log to confirm recorded behavior matches your expectations.

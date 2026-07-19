@@ -3,11 +3,12 @@
 Deploy local LLMs behind your own managed, OpenAI-compatible API server.
 
 vLLM or llama.cpp runs in an **isolated environment** managed by outo-llms,
-kept apart from the Python environments you already have. Users sign up,
-receive API keys, organize work into workspaces, and every request is
-metered per workspace. Open the built-in web GUI to sign up or log in, manage
-workspaces and API keys, and inspect server status, then point your OpenAI SDK
-at the URL for an HTTP call.
+kept apart from the Python environments you already have. Users sign up with a
+username and password, receive both an `outo_st_` session token for account
+management and an `outo_sk_` API key for inference, organize work into
+workspaces, and every request is metered per workspace. Open the built-in web
+GUI to sign up or log in, manage workspaces and API keys, and inspect server
+status, then point your OpenAI SDK at the URL for an HTTP call.
 
 Full documentation lives in [`docs/`](docs/index.md).
 
@@ -26,13 +27,18 @@ Full documentation lives in [`docs/`](docs/index.md).
   own virtual environments, never into the system interpreter.
 - **Choice of engines.** Bring Hugging Face models through vLLM, or GGUF
   models through llama.cpp, and switch between them with one command.
-- **Account, keys, and workspaces.** Open signup issues an `outo_sk_` API
-  key, creates a `default` workspace, and lets each user create more.
+- **Accounts with passwords and sessions.** Signup takes a username and
+  password, creates a `default` workspace, and returns both an `outo_st_`
+  session token (for management, 14-day expiry) and an `outo_sk_` API key
+  (for inference). Login re-issues a session token from the same
+  credentials.
 - **Per-workspace usage metering.** Token usage is recorded by workspace
-  and surfaced at `GET /v1/usage`.
+  and surfaced at `GET /v1/usage`, with an optional `?workspace=` query
+  parameter to scope to one workspace.
 - **OpenAI-compatible proxy.** `POST /v1/chat/completions`,
   `POST /v1/completions`, and `GET /v1/models` speak the same shapes
-  clients already know.
+  clients already know. API keys authenticate the inference endpoints;
+  session tokens authenticate management and usage.
 - **Optional HTTPS.** A local outo-llms CA is created under `data/certs/`
   and signs the server certificate. Setup can install the CA into the
   system trust store so clients trust it without warnings.
@@ -41,6 +47,10 @@ Full documentation lives in [`docs/`](docs/index.md).
 - **Built-in web GUI.** Visit the root URL for signup and login, a read-only
   model catalog, workspace and API-key management, and server status. Visit
   `/docs` for the full OpenAPI explorer.
+- **Pre-downloaded weights.** `outo-llms models add` fetches the model's
+  weights into the shared Hugging Face cache immediately, so the first
+  inference request only has to start the engine instead of downloading
+  the model too.
 
 ## Install
 
@@ -69,14 +79,14 @@ uses curl instead, and model registration remains CLI-only.
 outo-llms setup                              # interactive, fully explicit setup
 curl -s -X POST https://<your-server-ip-or-domain>/v1/account/signup \
   -H 'Content-Type: application/json' \
-  -d '{"username": "me"}'                    # returns an api_key + default workspace
-outo-llms models add tinyllama               # register a Hugging Face model
+  -d '{"username": "me", "password": "..."}' # returns api_key + session_token + default workspace
+outo-llms models add tinyllama               # register a model and download its weights
 curl -s https://<your-server-ip-or-domain>/v1/chat/completions \
   -H "Authorization: Bearer outo_sk_..." \
   -H 'Content-Type: application/json' \
   -d '{"model": "tinyllama", "messages": [{"role": "user", "content": "hi"}]}'
 curl -s https://<your-server-ip-or-domain>/v1/usage \
-  -H "Authorization: Bearer outo_sk_..."    # per-workspace token accounting
+  -H "Authorization: Bearer outo_st_..."    # per-workspace token accounting (session token)
 ```
 
 The CA installed by setup is trusted on the server itself, so plain
@@ -90,7 +100,8 @@ writes a short summary you can copy into your shell history.
 | Command | Purpose |
 | --- | --- |
 | `outo-llms setup` | Automated, explicit server setup (engine, HTTPS, firewall, launch) |
-| `outo-llms models add <name>` | Register a model in the registry |
+| `outo-llms models add <name>` | Register a model and download its weights |
+| `outo-llms models download <name>` | (Re)download weights for a registered model |
 | `outo-llms models list` | Show every registered model |
 | `outo-llms models remove <name>` | Unregister a model (asks first) |
 | `outo-llms engine list` | List known engines and their installed state |
@@ -113,11 +124,13 @@ bind their own loopback ports (llama.cpp on 8612, vLLM on 8613); clients
 never reach them directly.
 
 When a request hits `POST /v1/chat/completions` or `POST /v1/completions`,
-the server looks up the requested model in the registry, asks the engine
-manager to ensure the right engine is running with that model, then
-forwards the request. The active engine streams or returns its response
-unchanged, and the server records prompt and completion tokens against
-the calling workspace.
+the server authenticates the caller with the `outo_sk_` API key, looks up
+the requested model in the registry, asks the engine manager to ensure the
+right engine is running with that model, then forwards the request. The
+active engine streams or returns its response unchanged, and the server
+records prompt and completion tokens against the calling workspace. Account
+and workspace management requests use the `outo_st_` session token from the
+same user.
 
 Every state change, install step, and external command goes through
 `outo_llms.core.consent`, which announces what is about to happen, asks
