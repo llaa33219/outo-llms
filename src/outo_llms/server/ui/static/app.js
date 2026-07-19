@@ -1,7 +1,10 @@
 (() => {
   "use strict";
 
-  const STORAGE_KEY = "outo_llms_api_key";
+  const STORAGE_KEY = "outo_llms_session";
+  const LEGACY_STORAGE_KEY = "outo_llms_api_key";
+  const SIGN_IN_MIGRATION_NOTICE = "Sign-in changed: please log in with your username and password (API keys are now only for inference).";
+  const migratedLegacyKey = removeLegacyApiKey();
   const elements = {
     appShell: document.getElementById("app-shell"),
     modalRoot: document.getElementById("modal-root"),
@@ -26,7 +29,7 @@
 
   const state = {
     activeView: "models",
-    apiKey: readStoredKey(),
+    sessionToken: readStoredSession(),
     authNotice: "",
     notice: null,
     userStatus: "idle",
@@ -49,13 +52,9 @@
       usageError: null,
       requestId: 0,
     },
-    profileContext: {
-      status: "idle",
-      usage: null,
-      error: null,
-    },
     workspaceFormError: null,
     keyFormError: null,
+    passwordFormError: null,
     busyAction: "",
     profileOpen: false,
     modal: null,
@@ -71,7 +70,19 @@
     }
   }
 
-  function readStoredKey() {
+  function removeLegacyApiKey() {
+    try {
+      if (window.localStorage.getItem(LEGACY_STORAGE_KEY) === null) {
+        return false;
+      }
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function readStoredSession() {
     try {
       return window.localStorage.getItem(STORAGE_KEY) || "";
     } catch (_error) {
@@ -79,15 +90,14 @@
     }
   }
 
-  function storeKey(key) {
+  function storeSession(sessionToken) {
     try {
-      if (key) {
-        window.localStorage.setItem(STORAGE_KEY, key);
+      if (sessionToken) {
+        window.localStorage.setItem(STORAGE_KEY, sessionToken);
       } else {
         window.localStorage.removeItem(STORAGE_KEY);
       }
     } catch (_error) {
-      // The in-memory key still keeps the active session usable.
     }
   }
 
@@ -172,13 +182,15 @@
     }
   }
 
-  async function apiRequest(path, options = {}, keyOverride) {
-    const key = typeof keyOverride === "string" ? keyOverride : state.apiKey;
+  async function apiRequest(path, options = {}, sessionOverride, manageUnauthorized = true) {
+    const sessionToken = typeof sessionOverride === "string" ? sessionOverride : state.sessionToken;
     const headers = {
-      Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
       ...(options.headers || {}),
     };
+    if (sessionToken) {
+      headers.Authorization = `Bearer ${sessionToken}`;
+    }
     let response;
     try {
       response = await fetch(new URL(path, window.location.origin).toString(), {
@@ -190,23 +202,21 @@
     }
 
     const payload = await readJson(response);
-    if (response.status === 401) {
+    const errorMessage = extractErrorMessage(payload, `Request failed with status ${response.status}.`);
+    if (response.status === 401 && manageUnauthorized) {
       handleUnauthorized();
-      throw new ApiError("Your API key is invalid or revoked.", 401);
+      throw new ApiError(errorMessage, 401);
     }
     if (!response.ok) {
-      throw new ApiError(
-        extractErrorMessage(payload, `Request failed with status ${response.status}.`),
-        response.status,
-      );
+      throw new ApiError(errorMessage, response.status);
     }
     return payload;
   }
 
   function handleUnauthorized() {
-    state.apiKey = "";
-    storeKey("");
-    state.authNotice = "Your API key is invalid or revoked. Sign in again to continue.";
+    state.sessionToken = "";
+    storeSession("");
+    state.authNotice = "Your session expired or is no longer valid. Log in again to continue.";
     state.userStatus = "idle";
     state.user = null;
     state.userError = null;
@@ -223,7 +233,10 @@
       usageError: null,
       requestId: state.workspaceData.requestId + 1,
     };
-    state.profileContext = { status: "idle", usage: null, error: null };
+    state.workspaceFormError = null;
+    state.keyFormError = null;
+    state.passwordFormError = null;
+    state.busyAction = "";
     state.modal = null;
     state.profileOpen = true;
     render();
@@ -270,7 +283,7 @@
   }
 
   async function loadAccount() {
-    if (!state.apiKey || state.userStatus === "loading") {
+    if (!state.sessionToken || state.userStatus === "loading") {
       return null;
     }
     state.userStatus = "loading";
@@ -422,7 +435,7 @@
       pageHeader(
         "ORGANIZATION",
         "Workspaces",
-        "Keep keys, requests, and usage scoped to the work you are shipping.",
+        "Keep inference keys, requests, and usage scoped to the work you are shipping.",
       ),
     );
     const layout = node("div", "workspace-layout");
@@ -452,7 +465,7 @@
           "aria-current": workspace.name === state.selectedWorkspaceName ? "true" : "false",
         });
         const name = node("span", "workspace-item__name", workspace.name);
-        const metaText = workspace.name === state.currentWorkspaceName ? "Current key" : formatDate(workspace.created_at);
+        const metaText = workspace.name === state.currentWorkspaceName ? "Usage context" : formatDate(workspace.created_at);
         item.append(name, node("span", "workspace-item__meta", metaText));
         list.append(item);
       });
@@ -479,7 +492,7 @@
     const detail = node("section", "workspace-detail");
     const selected = state.workspaces.find((workspace) => workspace.name === state.selectedWorkspaceName);
     if (!selected) {
-      detail.append(emptyState("Select a workspace", "Choose a workspace from the list to manage its keys and usage."));
+      detail.append(emptyState("Select a workspace", "Choose a workspace from the list to manage its inference keys and usage."));
       return detail;
     }
     const header = node("div", "workspace-detail__header");
@@ -494,19 +507,24 @@
     const card = node("div", "card keys-card");
     const heading = node("div", "card-heading");
     const headingCopy = node("div");
-    headingCopy.append(node("p", "eyebrow", "ACCESS"), node("h3", "card-title", "API keys"), node("p", "card-description", "Keys are shown once at creation and never returned by listing."));
+    headingCopy.append(
+      node("p", "eyebrow", "ACCESS"),
+      node("h3", "card-title", "Inference API keys"),
+      node("p", "card-description", "Use these keys as Bearer tokens for /v1/chat/completions and other inference endpoints."),
+      node("p", "card-description", "Keys are shown once at creation and never returned by listing."),
+    );
     heading.append(headingCopy);
     card.append(heading);
 
     const data = state.workspaceData;
     if (data.keysStatus === "loading" || data.keysStatus === "idle") {
-      card.append(loadingState("Loading API keys"));
+      card.append(loadingState("Loading inference API keys"));
     } else if (data.keysStatus === "error") {
-      card.append(errorState(data.keysError, retryButton("retry-workspace", "Retry keys"), "Could not load API keys"));
+      card.append(errorState(data.keysError, retryButton("retry-workspace", "Retry keys"), "Could not load inference API keys"));
     } else {
       const keys = Array.isArray(data.keys) ? data.keys : [];
       if (!keys.length) {
-        card.append(emptyState("No keys in this workspace", "Create a key for a local app or integration."));
+        card.append(emptyState("No inference API keys in this workspace", "Create an inference key for a local app or integration."));
       } else {
         card.append(renderKeysTable(keys));
       }
@@ -518,7 +536,7 @@
   function renderKeysTable(keys) {
     const wrap = node("div", "table-wrap");
     const table = node("table", "data-table data-table--keys");
-    table.append(node("caption", "sr-only", "Workspace API keys"));
+    table.append(node("caption", "sr-only", "Workspace inference API keys"));
     const head = node("thead");
     const row = node("tr");
     ["Label", "Created", "Status", ""].forEach((label) => row.append(node("th", "", label)));
@@ -549,8 +567,8 @@
   function createKeyForm(workspaceName) {
     const form = node("form", "inline-form");
     setAttributes(form, { "data-form": "create-key", novalidate: "" });
-    const field = formField("key-label", "New key label", "Optional", "text", false, 120);
-    const submit = node("button", "button button--ghost", state.busyAction === "create-key" ? "Issuing…" : "Create key");
+    const field = formField("key-label", "New inference key label", "Optional", "text", false, 120);
+    const submit = node("button", "button button--ghost", state.busyAction === "create-key" ? "Issuing…" : "Create inference key");
     setAttributes(submit, { type: "submit", disabled: state.busyAction === "create-key" ? "" : null, "data-workspace-name": workspaceName });
     form.append(field, submit);
     if (state.keyFormError) {
@@ -559,7 +577,16 @@
     return form;
   }
 
-  function formField(id, labelText, placeholder, type = "text", required = false, maxLength = null) {
+  function formField(
+    id,
+    labelText,
+    placeholder,
+    type = "text",
+    required = false,
+    maxLength = null,
+    minLength = null,
+    autocomplete = "off",
+  ) {
     const field = node("label", "form-field");
     field.append(node("span", "form-field__label", labelText));
     const input = node("input", "text-input");
@@ -570,7 +597,8 @@
       placeholder,
       required: required ? "" : null,
       maxlength: maxLength,
-      autocomplete: "off",
+      minlength: minLength,
+      autocomplete,
     });
     field.append(input);
     return field;
@@ -587,7 +615,7 @@
     const card = node("div", "card usage-card");
     const heading = node("div", "card-heading");
     const copy = node("div");
-    copy.append(node("p", "eyebrow", "METERING"), node("h3", "card-title", "Usage summary"), node("p", "card-description", "Totals for the workspace associated with the current API key."));
+    copy.append(node("p", "eyebrow", "METERING"), node("h3", "card-title", "Usage summary"), node("p", "card-description", "Totals returned for the current workspace context."));
     heading.append(copy);
     card.append(heading);
     const data = state.workspaceData;
@@ -602,7 +630,7 @@
     const usage = isObject(data.usage) ? data.usage : {};
     const summary = node("div", "metric-grid");
     summary.append(metric("Requests", formatNumber(usage.total_requests)), metric("Total tokens", formatNumber(usage.total_tokens)));
-    card.append(node("p", "usage-context", `Current key workspace: ${safeString(usage.workspace, "Unavailable")}`), summary);
+    card.append(node("p", "usage-context", `Usage workspace: ${safeString(usage.workspace, "Unavailable")}`), summary);
     const models = Array.isArray(usage.by_model) ? usage.by_model : [];
     if (models.length) {
       const tableWrap = node("div", "table-wrap table-wrap--usage");
@@ -641,7 +669,7 @@
 
   async function loadWorkspaceData() {
     const workspaceName = state.selectedWorkspaceName;
-    if (!state.apiKey || !workspaceName || state.workspaceData.status === "loading") {
+    if (!state.sessionToken || !workspaceName || state.workspaceData.status === "loading") {
       return;
     }
     const requestId = state.workspaceData.requestId + 1;
@@ -785,7 +813,7 @@
   }
 
   async function loadView(viewName) {
-    if (!state.apiKey || !state.views[viewName] || state.views[viewName].status === "loading") {
+    if (!state.sessionToken || !state.views[viewName] || state.views[viewName].status === "loading") {
       return;
     }
     const view = state.views[viewName];
@@ -807,35 +835,34 @@
     }
   }
 
-  async function loadProfileContext() {
-    if (!state.apiKey || state.profileContext.status === "loading") {
-      return;
+  function renderPasswordCard() {
+    const card = node("div", "card context-card password-card");
+    card.append(
+      node("p", "eyebrow", "SECURITY"),
+      node("h2", "card-title", "Change password"),
+      node("p", "card-description", "Use at least 8 characters for your new password."),
+    );
+    const form = node("form", "stack-form modal-form");
+    setAttributes(form, { "data-form": "change-password", novalidate: "" });
+    form.append(
+      formField("current_password", "Current password", "Enter current password", "password", true, 256, 8, "current-password"),
+      formField("new_password", "New password", "At least 8 characters", "password", true, 256, 8, "new-password"),
+      formField("confirm_password", "Confirm new password", "Enter the new password again", "password", true, 256, 8, "new-password"),
+    );
+    const busy = state.busyAction === "change-password";
+    const submit = node("button", "button button--primary button--full", busy ? "Changing…" : "Change password");
+    setAttributes(submit, { type: "submit", disabled: busy ? "" : null });
+    form.append(submit);
+    if (state.passwordFormError) {
+      form.append(formError(state.passwordFormError));
     }
-    state.profileContext = { status: "loading", usage: null, error: null };
-    render();
-    try {
-      const usage = await apiRequest("/v1/usage");
-      state.profileContext = { status: "ready", usage, error: null };
-      if (isObject(usage) && typeof usage.workspace === "string") {
-        state.currentWorkspaceName = usage.workspace;
-      }
-      render();
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        return;
-      }
-      state.profileContext = {
-        status: "error",
-        usage: null,
-        error: error instanceof ApiError ? error : new ApiError("server unreachable", 0, true),
-      };
-      render();
-    }
+    card.append(form);
+    return card;
   }
 
   function renderProfile() {
     const wrapper = node("div", "view view--profile");
-    wrapper.append(pageHeader("ACCOUNT", "Profile", "Your account identity and the workspace context attached to this API key."));
+    wrapper.append(pageHeader("ACCOUNT", "Profile", "Manage your account identity, workspaces, and password."));
     if (state.userStatus === "loading" || state.userStatus === "idle") {
       wrapper.append(loadingState("Loading profile"));
       return wrapper;
@@ -865,27 +892,12 @@
         const copy = node("div");
         copy.append(node("strong", "profile-workspace-item__name", workspace.name), node("span", "profile-workspace-item__meta", `Created ${formatDate(workspace.created_at)}`));
         item.append(copy);
-        if (workspace.name === state.currentWorkspaceName) {
-          item.append(node("span", "status-badge status-badge--accent", "Current key"));
-        }
         workspaceList.append(item);
       });
     }
     workspaceCard.append(workspaceList);
 
-    const contextCard = node("div", "card context-card");
-    contextCard.append(node("p", "eyebrow", "KEY CONTEXT"), node("h2", "card-title", "Current API key"), node("p", "card-description", "Requests made with this key are metered against one workspace."));
-    if (state.profileContext.status === "loading" || state.profileContext.status === "idle") {
-      contextCard.append(loadingState("Resolving workspace context"));
-    } else if (state.profileContext.status === "error") {
-      contextCard.append(errorState(state.profileContext.error, retryButton("retry-profile-context", "Retry context"), "Could not resolve key context"));
-    } else {
-      const usage = isObject(state.profileContext.usage) ? state.profileContext.usage : {};
-      const context = node("div", "context-value");
-      context.append(node("span", "context-value__label", "Workspace"), node("strong", "context-value__name", safeString(usage.workspace, state.currentWorkspaceName || "Unavailable")));
-      contextCard.append(context, node("p", "muted-copy", `${formatNumber(usage.total_requests)} requests · ${formatNumber(usage.total_tokens)} tokens`));
-    }
-    content.append(identity, workspaceCard, contextCard);
+    content.append(identity, workspaceCard, renderPasswordCard());
     wrapper.append(content);
     return wrapper;
   }
@@ -907,15 +919,15 @@
     clear(elements.viewRoot);
     elements.viewRoot.setAttribute("role", "tabpanel");
     elements.viewRoot.setAttribute("aria-label", state.activeView === "status" ? "Server status" : `${state.activeView} view`);
-    if (!state.apiKey) {
+    if (!state.sessionToken) {
       const titles = {
-        models: ["See your model catalog", "Log in to view the models registered on this server."],
-        workspaces: ["Your work, in one place", "Log in to manage workspaces, API keys, and usage."],
-        status: ["Connect to your server", "Log in to inspect the API server and active engine."],
-        profile: ["Welcome to outo-llms", "Log in with an existing API key or sign up for a new account."],
+        models: "See your model catalog",
+        workspaces: "Your work, in one place",
+        status: "Connect to your server",
+        profile: "Welcome to outo-llms",
       };
-      const [title, description] = titles[state.activeView] || titles.models;
-      elements.viewRoot.append(authGate(title, description));
+      const title = titles[state.activeView] || titles.models;
+      elements.viewRoot.append(authGate(title, "Log in with your username and password, or sign up for an account."));
       return;
     }
     if (state.userStatus === "error") {
@@ -960,8 +972,8 @@
       return;
     }
     const menuHeader = node("div", "profile-menu__header");
-    menuHeader.append(node("span", "eyebrow", state.apiKey ? "SIGNED IN" : "LOCAL ACCESS"));
-    if (state.apiKey && state.user) {
+    menuHeader.append(node("span", "eyebrow", state.sessionToken ? "SIGNED IN" : "LOCAL ACCESS"));
+    if (state.sessionToken && state.user) {
       menuHeader.append(node("strong", "profile-menu__username", safeString(state.user.username, "User")));
     } else {
       menuHeader.append(node("strong", "profile-menu__username", "Not signed in"));
@@ -971,11 +983,13 @@
       elements.profileMenu.append(node("p", "profile-menu__notice", state.authNotice));
     }
     elements.profileMenu.append(node("div", "profile-menu__divider"));
-    if (state.apiKey) {
+    if (state.sessionToken) {
       const profile = menuButton("View profile", "profile-view");
-      const logout = menuButton("Log out", "logout");
-      logout.classList.add("menu-item--danger");
-      elements.profileMenu.append(profile, logout);
+      const loggingOut = state.busyAction === "logout";
+      const logoutButton = menuButton(loggingOut ? "Logging out…" : "Log out", "logout");
+      logoutButton.classList.add("menu-item--danger");
+      setAttributes(logoutButton, { disabled: loggingOut ? "" : null });
+      elements.profileMenu.append(profile, logoutButton);
     } else {
       elements.profileMenu.append(menuButton("Log in", "open-login"), menuButton("Sign up", "open-signup"));
     }
@@ -1012,19 +1026,29 @@
   function renderAuthModal(panel, kind) {
     const isLogin = kind === "login";
     const title = isLogin ? "Log in" : "Create your account";
-    const description = isLogin ? "Use an existing outo-llms API key to continue." : "Sign up locally and receive your first workspace key.";
+    const description = isLogin
+      ? "Log in with your username and password."
+      : "Choose a username and password to create your local account.";
     panel.append(node("p", "eyebrow", isLogin ? "EXISTING ACCOUNT" : "NEW ACCOUNT"), setAttributes(node("h2", "modal-title", title), { id: "modal-title" }), node("p", "modal-description", description));
     const form = node("form", "modal-form");
     setAttributes(form, { "data-form": isLogin ? "login" : "signup", novalidate: "" });
-    const field = isLogin
-      ? formField("login-api-key", "API key", "outo_sk_…", "password", true, 256)
-      : formField("signup-username", "Username", "e.g. luke", "text", true, 64);
-    if (isLogin) {
-      field.querySelector("input")?.setAttribute("autocomplete", "current-password");
-    }
+    const prefix = isLogin ? "login" : "signup";
+    form.append(
+      formField(`${prefix}-username`, "Username", "e.g. luke", "text", true, 64, null, "username"),
+      formField(
+        `${prefix}-password`,
+        "Password",
+        "At least 8 characters",
+        "password",
+        true,
+        256,
+        8,
+        isLogin ? "current-password" : "new-password",
+      ),
+    );
     const submit = node("button", "button button--primary button--full", state.modal.busy ? "Working…" : isLogin ? "Log in" : "Sign up");
     setAttributes(submit, { type: "submit", disabled: state.modal.busy ? "" : null });
-    form.append(field, submit);
+    form.append(submit);
     if (state.modal.error) {
       form.append(formError(state.modal.error));
     }
@@ -1036,7 +1060,7 @@
     const warning = node("div", "secret-warning");
     warning.append(node("strong", "secret-warning__title", "Shown only once"), node("p", "secret-warning__copy", "Copy this key now. outo-llms will not display the plaintext key again."));
     const secret = node("code", "secret-value", state.modal.secret);
-    setAttributes(secret, { tabindex: "0", "aria-label": "New API key" });
+    setAttributes(secret, { tabindex: "0", "aria-label": "New inference API key" });
     const copy = actionButton("Copy key", "copy-secret", "button button--primary");
     const actions = node("div", "modal-actions");
     actions.append(copy, actionButton("I saved it", "close-modal", "button button--ghost"));
@@ -1049,8 +1073,7 @@
     state.modal = { kind, busy: false, error: null };
     render();
     window.setTimeout(() => {
-      const fieldId = kind === "login" ? "login-api-key" : "signup-username";
-      document.getElementById(fieldId)?.focus();
+      document.getElementById(`${kind}-username`)?.focus();
     }, 0);
   }
 
@@ -1102,9 +1125,15 @@
       return;
     }
     const formData = new FormData(form);
-    const key = String(formData.get("login-api-key") || "").trim();
-    if (!key) {
-      state.modal.error = new ApiError("Enter an API key to continue.");
+    const username = String(formData.get("login-username") || "").trim();
+    const password = String(formData.get("login-password") || "");
+    if (!username) {
+      state.modal.error = new ApiError("Enter your username to continue.");
+      render();
+      return;
+    }
+    if (password.length < 8) {
+      state.modal.error = new ApiError("Enter a password with at least 8 characters.");
       render();
       return;
     }
@@ -1112,9 +1141,18 @@
     state.modal.error = null;
     render();
     try {
-      const payload = await apiRequest("/v1/account/me", {}, key);
-      state.apiKey = key;
-      storeKey(key);
+      const payload = await apiRequest(
+        "/v1/account/login",
+        { method: "POST", body: JSON.stringify({ username, password }) },
+        "",
+        false,
+      );
+      const sessionToken = isObject(payload) && typeof payload.session_token === "string" ? payload.session_token : "";
+      if (!sessionToken) {
+        throw new ApiError("The server did not return a session token.");
+      }
+      state.sessionToken = sessionToken;
+      storeSession(sessionToken);
       state.authNotice = "";
       state.modal = null;
       state.profileOpen = false;
@@ -1122,11 +1160,7 @@
       applyAccountPayload(payload);
       state.userStatus = "ready";
       render();
-      loadProfileContext();
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        return;
-      }
       if (state.modal) {
         state.modal.busy = false;
         state.modal.error = error instanceof ApiError ? error : new ApiError("server unreachable", 0, true);
@@ -1141,8 +1175,14 @@
     }
     const formData = new FormData(form);
     const username = String(formData.get("signup-username") || "").trim();
+    const password = String(formData.get("signup-password") || "");
     if (!username) {
       state.modal.error = new ApiError("Enter a username to continue.");
+      render();
+      return;
+    }
+    if (password.length < 8) {
+      state.modal.error = new ApiError("Enter a password with at least 8 characters.");
       render();
       return;
     }
@@ -1152,38 +1192,84 @@
     try {
       const payload = await apiRequest(
         "/v1/account/signup",
-        { method: "POST", body: JSON.stringify({ username }) },
+        { method: "POST", body: JSON.stringify({ username, password }) },
         "",
+        false,
       );
       const apiKey = isObject(payload) && typeof payload.api_key === "string" ? payload.api_key : "";
+      const sessionToken = isObject(payload) && typeof payload.session_token === "string" ? payload.session_token : "";
       if (!apiKey) {
         throw new ApiError("The server did not return an API key.");
       }
-      state.apiKey = apiKey;
-      storeKey(apiKey);
-      state.currentWorkspaceName = isObject(payload) ? safeString(payload.workspace, "") : "";
+      if (!sessionToken) {
+        throw new ApiError("The server did not return a session token.");
+      }
+      state.sessionToken = sessionToken;
+      storeSession(sessionToken);
+      const workspace = isObject(payload) ? payload.workspace : null;
+      state.currentWorkspaceName = typeof workspace === "string"
+        ? workspace
+        : safeString(isObject(workspace) ? workspace.name : "", "");
       state.activeView = "profile";
       state.profileOpen = false;
       state.userStatus = "idle";
       openSecretModal(
-        "Your new API key",
-        "Your account is ready. Save this key before continuing.",
+        "Your inference API key",
+        "This key is for inference clients (curl, OpenAI SDK). Store it somewhere safe - it is shown once.",
         apiKey,
       );
-      loadAccount().then((account) => {
-        if (account) {
-          loadProfileContext();
-        }
-      });
+      loadAccount();
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        return;
-      }
       if (state.modal) {
         state.modal.busy = false;
         state.modal.error = error instanceof ApiError ? error : new ApiError("server unreachable", 0, true);
         render();
       }
+    }
+  }
+
+  async function submitPassword(form) {
+    const formData = new FormData(form);
+    const currentPassword = String(formData.get("current_password") || "");
+    const newPassword = String(formData.get("new_password") || "");
+    const confirmPassword = String(formData.get("confirm_password") || "");
+    if (currentPassword.length < 8 || newPassword.length < 8 || confirmPassword.length < 8) {
+      state.passwordFormError = new ApiError("All password fields must contain at least 8 characters.");
+      render();
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      state.passwordFormError = new ApiError("New password and confirmation do not match.");
+      render();
+      return;
+    }
+    state.busyAction = "change-password";
+    state.passwordFormError = null;
+    render();
+    try {
+      const payload = await apiRequest(
+        "/v1/account/password",
+        {
+          method: "POST",
+          body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+        },
+        undefined,
+        false,
+      );
+      if (!isObject(payload) || payload.changed !== true) {
+        throw new ApiError("The server did not confirm the password change.");
+      }
+      state.busyAction = "";
+      state.passwordFormError = null;
+      showNotice("Password changed.", "success");
+    } catch (error) {
+      state.busyAction = "";
+      state.passwordFormError = error instanceof ApiError && error.status === 401
+        ? new ApiError("current password is incorrect", 401)
+        : error instanceof ApiError
+          ? error
+          : new ApiError("server unreachable", 0, true);
+      render();
     }
   }
 
@@ -1252,8 +1338,8 @@
       state.busyAction = "";
       await loadWorkspaceData();
       openSecretModal(
-        "Your new workspace key",
-        `This key grants access to the ${workspaceName} workspace. Save it before closing.`,
+        "Your new inference API key",
+        `This inference key grants access to the ${workspaceName} workspace. Store it somewhere safe - it is shown once.`,
         apiKey,
       );
     } catch (error) {
@@ -1281,7 +1367,7 @@
     try {
       await apiRequest(`/v1/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
       state.busyAction = "";
-      showNotice("API key revoked.", "success");
+      showNotice("Inference API key revoked.", "success");
       await loadWorkspaceData();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -1293,6 +1379,46 @@
     }
   }
 
+  async function logout() {
+    if (!state.sessionToken || state.busyAction === "logout") {
+      return;
+    }
+    const sessionToken = state.sessionToken;
+    state.busyAction = "logout";
+    render();
+    try {
+      await apiRequest("/v1/account/logout", { method: "POST" }, sessionToken, false);
+    } catch (_error) {
+    }
+    state.sessionToken = "";
+    storeSession("");
+    state.userStatus = "idle";
+    state.user = null;
+    state.userError = null;
+    state.workspaces = [];
+    state.selectedWorkspaceName = "";
+    state.currentWorkspaceName = "";
+    state.workspaceData = {
+      status: "idle",
+      keysStatus: "idle",
+      keys: null,
+      keysError: null,
+      usageStatus: "idle",
+      usage: null,
+      usageError: null,
+      requestId: state.workspaceData.requestId + 1,
+    };
+    state.workspaceFormError = null;
+    state.keyFormError = null;
+    state.passwordFormError = null;
+    state.busyAction = "";
+    state.authNotice = "";
+    state.profileOpen = false;
+    state.activeView = "models";
+    render();
+    showNotice("You are logged out.", "success");
+  }
+
   function switchView(viewName) {
     if (!["models", "workspaces", "status", "profile"].includes(viewName)) {
       return;
@@ -1301,7 +1427,7 @@
     state.profileOpen = false;
     state.notice = null;
     render();
-    if (!state.apiKey) {
+    if (!state.sessionToken) {
       return;
     }
     if (state.userStatus === "idle") {
@@ -1316,7 +1442,7 @@
   }
 
   function loadActiveView() {
-    if (!state.apiKey || state.userStatus !== "ready") {
+    if (!state.sessionToken || state.userStatus !== "ready") {
       return;
     }
     if (state.activeView === "models") {
@@ -1325,8 +1451,6 @@
       loadWorkspaceData();
     } else if (state.activeView === "status") {
       loadView("status");
-    } else {
-      loadProfileContext();
     }
   }
 
@@ -1381,18 +1505,7 @@
       } else if (action === "profile-view") {
         switchView("profile");
       } else if (action === "logout") {
-        state.apiKey = "";
-        storeKey("");
-        state.userStatus = "idle";
-        state.user = null;
-        state.workspaces = [];
-        state.selectedWorkspaceName = "";
-        state.currentWorkspaceName = "";
-        state.authNotice = "";
-        state.profileOpen = false;
-        state.activeView = "models";
-        render();
-        showNotice("You are logged out.", "success");
+        logout();
       } else if (action === "close-modal") {
         closeModal();
       } else if (action === "copy-secret") {
@@ -1401,9 +1514,6 @@
         retryView(actionElement.dataset.view || state.activeView);
       } else if (action === "retry-account" || action === "retry-profile") {
         retryView("account");
-      } else if (action === "retry-profile-context") {
-        state.profileContext.status = "idle";
-        loadProfileContext();
       } else if (action === "retry-workspace") {
         retryWorkspace();
       } else if (action === "select-workspace") {
@@ -1445,6 +1555,8 @@
       submitLogin(form);
     } else if (formName === "signup") {
       submitSignup(form);
+    } else if (formName === "change-password") {
+      submitPassword(form);
     } else if (formName === "create-workspace") {
       submitWorkspace(form);
     } else if (formName === "create-key") {
@@ -1469,7 +1581,10 @@
     document.addEventListener("submit", onSubmit);
     document.addEventListener("keydown", onKeyDown);
     render();
-    if (state.apiKey) {
+    if (migratedLegacyKey) {
+      showNotice(SIGN_IN_MIGRATION_NOTICE);
+    }
+    if (state.sessionToken) {
       loadAccount().then((payload) => {
         if (payload) {
           loadActiveView();
