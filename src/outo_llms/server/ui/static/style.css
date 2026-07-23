@@ -590,6 +590,26 @@ input:focus-visible,
   font: inherit;
 }
 
+.request-example__snippet {
+  display: grid;
+}
+
+.request-example__snippet--streaming {
+  border-top: 1px solid var(--border);
+}
+
+.request-example__sub-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+
+.request-example__sub-label {
+  margin: var(--space-0);
+}
+
 .numeric-cell {
   color: var(--muted);
   font-variant-numeric: tabular-nums;

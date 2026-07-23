@@ -622,12 +622,13 @@
     );
     const examples = node("div", "request-examples");
     modelRequestExamples(modelName).forEach((example) => {
-      examples.append(renderRequestExample(example.title, example.snippet));
+      examples.append(renderRequestExample(example.title, example.snippet, example.streamingSnippet));
     });
     section.append(
       heading,
       examples,
       node("p", "muted-copy", "Replace outo_sk_... with an inference API key from your workspace."),
+      node("p", "muted-copy", "Streaming requests are served as Server-Sent Events (SSE); -N disables curl buffering."),
     );
     return section;
   }
@@ -644,27 +645,44 @@
       {
         title: "curl",
         snippet: `curl -s ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer outo_sk_..." \\\n  -H "Content-Type: application/json" \\\n  -d '${requestBody}'`,
+        streamingSnippet: `curl -sN ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer outo_sk_..." \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": ${modelLiteral}, "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'`,
       },
       {
         title: "Python",
         snippet: `from openai import OpenAI\n\nclient = OpenAI(base_url=${baseUrlLiteral}, api_key="outo_sk_...")\nresp = client.chat.completions.create(\n    model=${modelLiteral},\n    messages=[{"role": "user", "content": "Hello!"}],\n)\nprint(resp.choices[0].message.content)`,
+        streamingSnippet: `stream = client.chat.completions.create(\n    model=${modelLiteral},\n    messages=[{"role": "user", "content": "Hello!"}],\n    stream=True,\n)\nfor chunk in stream:\n    print(chunk.choices[0].delta.content or "", end="")`,
       },
       {
         title: "Node.js",
         snippet: `import OpenAI from "openai";\n\nconst client = new OpenAI({ baseURL: ${baseUrlLiteral}, apiKey: "outo_sk_..." });\nconst resp = await client.chat.completions.create({\n  model: ${modelLiteral},\n  messages: [{ role: "user", content: "Hello!" }],\n});\nconsole.log(resp.choices[0].message.content);`,
+        streamingSnippet: `const stream = await client.chat.completions.create({\n  model: ${modelLiteral},\n  messages: [{ role: "user", content: "Hello!" }],\n  stream: true,\n});\nfor await (const chunk of stream) {\n  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");\n}`,
       },
     ];
   }
 
-  function renderRequestExample(title, snippet) {
+  function renderRequestExample(title, snippet, streamingSnippet) {
     const card = node("article", "card request-example");
     const heading = node("div", "request-example__heading");
     const copy = actionButton("Copy", "copy-snippet", "button button--ghost button--small");
     setAttributes(copy, { "aria-label": `Copy ${title} example request` });
     heading.append(node("h3", "card-title", title), copy);
-    const pre = node("pre", "request-example__pre");
-    pre.append(node("code", "request-example__code", snippet));
-    card.append(heading, pre);
+
+    const mainBlock = node("div", "request-example__snippet");
+    const mainPre = node("pre", "request-example__pre");
+    mainPre.append(node("code", "request-example__code", snippet));
+    mainBlock.append(mainPre);
+
+    const streamingBlock = node("div", "request-example__snippet request-example__snippet--streaming");
+    const streamingSubHeading = node("div", "request-example__sub-heading");
+    const streamingLabel = node("p", "eyebrow request-example__sub-label", "Streaming");
+    const streamingCopy = actionButton("Copy", "copy-snippet", "button button--ghost button--small");
+    setAttributes(streamingCopy, { "aria-label": `Copy streaming ${title} example` });
+    streamingSubHeading.append(streamingLabel, streamingCopy);
+    const streamingPre = node("pre", "request-example__pre");
+    streamingPre.append(node("code", "request-example__code", streamingSnippet));
+    streamingBlock.append(streamingSubHeading, streamingPre);
+
+    card.append(heading, mainBlock, streamingBlock);
     return card;
   }
 
@@ -1849,7 +1867,10 @@
       } else if (action === "copy-cached-key") {
         copySecret(actionElement, getCachedInferenceKey(actionElement.dataset.keyId || ""));
       } else if (action === "copy-snippet") {
-        const code = actionElement.closest(".request-example")?.querySelector(".request-example__code");
+        const ownSnippet = actionElement.closest(".request-example__snippet");
+        const code = ownSnippet
+          ? ownSnippet.querySelector(".request-example__code")
+          : actionElement.closest(".request-example")?.querySelector(".request-example__code");
         copySecret(actionElement, code?.textContent || "");
       } else if (action === "select-model") {
         openModelDetail(actionElement.dataset.modelName || "");
