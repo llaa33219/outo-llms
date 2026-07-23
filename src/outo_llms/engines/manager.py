@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -31,14 +32,6 @@ from ..core import consent, paths, process
 from .base import EngineAdapter, ModelRef, adapter_names, get_adapter
 
 _PIP_TAIL_LINES = 20
-
-_HF_DOWNLOAD_SNIPPET = """\
-import sys
-
-from huggingface_hub import hf_hub_download
-
-print(hf_hub_download(sys.argv[1], sys.argv[2]))
-"""
 
 _LIST_GGUF_SNIPPET = """\
 import sys
@@ -56,10 +49,48 @@ import sys
 from huggingface_hub import snapshot_download
 
 repo_id = sys.argv[1]
-allow_patterns = [sys.argv[2]] if len(sys.argv) > 2 else None
+allow_patterns = sys.argv[2:] if len(sys.argv) > 2 else None
 local_path = snapshot_download(repo_id=repo_id, allow_patterns=allow_patterns)
 print(f"weights ready at: {local_path}")
 """
+
+_SHARD_RE = re.compile(r"^(.+)-\d{5}-of-\d{5}\.gguf$")
+
+
+def _group_gguf_entries(candidates: list[str]) -> tuple[list[str], dict[str, list[str]]]:
+    """Collapse shard files into per-quant entries.
+
+    Shards look like ``name-00001-of-00003.gguf``; llama.cpp loads the
+    whole group from its first shard. Returns (entries, groups): entries
+    are display strings (file name for standalone files, ``"<prefix> (N
+    shards)"`` for groups) and groups maps each entry to its sorted
+    member files.
+    """
+    shards: dict[str, list[str]] = {}
+    groups: dict[str, list[str]] = {}
+    entries: list[str] = []
+    for candidate in candidates:
+        match = _SHARD_RE.match(candidate)
+        if match is None:
+            groups[candidate] = [candidate]
+            entries.append(candidate)
+            continue
+        shards.setdefault(match.group(1), []).append(candidate)
+    for prefix in sorted(shards):
+        members = sorted(shards[prefix])
+        entry = f"{prefix} ({len(members)} shards)"
+        groups[entry] = members
+        entries.append(entry)
+    return entries, groups
+
+
+def _shard_members(filename: str) -> list[str]:
+    """All shard files of a split GGUF, derived from the shard pattern."""
+    match = re.match(r"^(.+)-(\d{5})-of-(\d{5})\.gguf$", filename)
+    if match is None:
+        return [filename]
+    prefix, _, total = match.groups()
+    return [f"{prefix}-{index:05d}-of-{total}.gguf" for index in range(1, int(total) + 1)]
 
 
 class EngineNotInstalledError(RuntimeError):
@@ -277,6 +308,7 @@ class EngineManager:
             return model
         if ":" in model.source:
             repo, filename = model.source.split(":", 1)
+            members = _shard_members(filename)
         else:
             repo = model.source
             candidates = self._list_gguf_files(python, model.source)
@@ -288,26 +320,32 @@ class EngineManager:
                 ]
                 if standalone:
                     candidates = standalone
-            if len(candidates) == 1:
-                filename = candidates[0]
+            entries, groups = _group_gguf_entries(candidates)
+            if len(entries) == 1:
+                members = groups[entries[0]]
             else:
-                listing = "\n".join(f"  - {candidate}" for candidate in candidates)
+                listing = "\n".join(f"  - {e}" for e in entries)
                 raise RuntimeError(
-                    f"repo {model.source!r} contains multiple .gguf files:\n"
+                    f"repo {model.source!r} contains multiple .gguf options:\n"
                     f"{listing}\nre-register with an exact file: "
                     f"outo-llms models remove {model.name} && "
                     f"outo-llms models add {model.name} -k gguf "
                     f"-s {model.source}:<file>"
                 )
+        first = members[0]
         lines = self._run_hf_snippet(
-            [str(python), "-c", _HF_DOWNLOAD_SNIPPET, repo, filename],
+            [str(python), "-c", _DOWNLOAD_SNIPPET, repo, *members],
             None,
-            label="resolve model path",
+            label="resolve model files",
         )
-        local_path = lines[-1].strip() if lines else ""
-        if not local_path:
-            raise RuntimeError(f"could not resolve a local path for {repo}:{filename}")
-        return ModelRef(name=model.name, source=local_path, kind=model.kind)
+        snapshot_dir = ""
+        for line in reversed(lines):
+            if line.startswith("weights ready at:"):
+                snapshot_dir = line.split(":", 1)[1].strip()
+                break
+        if not snapshot_dir:
+            raise RuntimeError(f"could not resolve local files for {repo}")
+        return ModelRef(name=model.name, source=f"{snapshot_dir}/{first}", kind=model.kind)
 
     def stop(self) -> None:
         """Stop the current engine (if running) and clear its state files."""
@@ -360,9 +398,11 @@ class EngineManager:
         python = self.venv_python(name)
         repo = model.source
         filename: str | None = None
+        members: list[str] = []
         if model.kind == "gguf":
             if ":" in model.source:
                 repo, filename = model.source.split(":", 1)
+                members = _shard_members(filename)
             else:
                 consent.announce("list .gguf files in the repo", model.source)
                 candidates = self._list_gguf_files(python, model.source)
@@ -376,24 +416,28 @@ class EngineManager:
                     ]
                     if standalone:
                         candidates = standalone
-                if len(candidates) == 1:
-                    filename = candidates[0]
+                entries, groups = _group_gguf_entries(candidates)
+                if len(entries) == 1:
+                    entry = entries[0]
                 else:
                     if choose is None:
-                        listing = "\n".join(f"  - {candidate}" for candidate in candidates)
+                        listing = "\n".join(f"  - {e}" for e in entries)
                         raise RuntimeError(
-                            f"repo {model.source!r} contains multiple .gguf files:\n"
+                            f"repo {model.source!r} contains multiple .gguf options:\n"
                             f"{listing}\nre-run interactively or use --source repo:file"
                         )
-                    filename = choose(candidates)
-                    if filename is None:
+                    chosen = choose(entries)
+                    if chosen is None:
                         raise RuntimeError("download cancelled")
+                    entry = chosen
+                members = groups[entry]
+                filename = members[0]
 
         target = f"{repo}:{filename}" if filename is not None else repo
         consent.announce(f"download '{model.name}' with {adapter.display_name}", target)
         argv = [str(python), "-c", _DOWNLOAD_SNIPPET, repo]
         if filename is not None:
-            argv.append(filename)
+            argv.extend(members)
         self._run_hf_snippet(argv, on_event, label="model download")
         consent.log_action("download_model", f"{name}:{model.source}")
         return target
