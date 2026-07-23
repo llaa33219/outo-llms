@@ -83,6 +83,15 @@ def _base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/v1"
 
 
+def _log_tail(path: Path, *, lines: int = 15) -> str:
+    """Last ``lines`` of an engine log, for startup-failure messages."""
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "<log unavailable>"
+    return "\n".join(content[-lines:]) or "<log empty>"
+
+
 def _adapter_kinds(adapter: EngineAdapter) -> list[str]:
     """Model kinds ``adapter`` can serve, probed against the contract."""
     return [
@@ -241,7 +250,7 @@ class EngineManager:
             if returncode is not None:
                 raise RuntimeError(
                     f"engine '{name}' exited during startup (code {returncode}); "
-                    f"see log: {log_path}"
+                    f"last log lines:\n{_log_tail(log_path)}"
                 )
             try:
                 response = httpx.get(f"{base_url}/models", timeout=0.5)
@@ -351,6 +360,14 @@ class EngineManager:
                 candidates = self._list_gguf_files(python, model.source)
                 if not candidates:
                     raise RuntimeError(f"no .gguf files in repo {model.source!r}")
+                if len(candidates) > 1:
+                    standalone = [
+                        candidate
+                        for candidate in candidates
+                        if "mmproj" not in candidate.lower()
+                    ]
+                    if standalone:
+                        candidates = standalone
                 if len(candidates) == 1:
                     filename = candidates[0]
                 else:
@@ -509,3 +526,4 @@ class EngineManager:
     def _run_pip(argv: list[str], on_event: Callable[[str], None] | None) -> None:
         """Stream a pip invocation, forwarding each line to ``on_event``."""
         EngineManager._run_streaming(argv, on_event, label="pip install")
+                                                                                                                                                                                                                                                                                                       
