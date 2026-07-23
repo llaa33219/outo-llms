@@ -970,7 +970,8 @@ input:focus-visible,
 .status-card,
 .identity-card,
 .profile-workspaces-card,
-.context-card {
+.context-card,
+.live-card {
   padding: var(--space-5);
 }
 
@@ -1123,6 +1124,40 @@ input:focus-visible,
   border-color: var(--accent-border);
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.live-stack {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.live-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.live-banner__text {
+  flex: 1 1 auto;
+}
+
+.live-banner__dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.live-empty {
+  margin: var(--space-3) var(--space-0) var(--space-0);
 }
 
 .metric-grid {
@@ -1524,7 +1559,8 @@ input:focus-visible,
   .status-card,
   .identity-card,
   .profile-workspaces-card,
-  .context-card {
+  .context-card,
+  .live-card {
     padding: var(--space-4);
   }
 }

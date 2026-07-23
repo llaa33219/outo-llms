@@ -48,6 +48,7 @@
     views: {
       models: newViewState(),
       status: newViewState(),
+      live: newViewState(),
     },
     workspaceData: {
       status: "idle",
@@ -66,6 +67,7 @@
     profileOpen: false,
     modal: null,
     noticeTimer: 0,
+    liveTimer: 0,
   };
 
   class ApiError extends Error {
@@ -1126,8 +1128,17 @@
     view.error = null;
     render();
     try {
-      const payload = await apiRequest(viewName === "models" ? "/v1/models" : "/v1/status");
-      view.data = viewName === "models" && isObject(payload) ? (Array.isArray(payload.data) ? payload.data : []) : payload;
+      let payload;
+      if (viewName === "models") {
+        payload = await apiRequest("/v1/models");
+        view.data = isObject(payload) ? (Array.isArray(payload.data) ? payload.data : []) : [];
+      } else if (viewName === "live") {
+        payload = await apiRequest("/v1/live");
+        view.data = isObject(payload) && !Array.isArray(payload) ? payload : null;
+      } else {
+        payload = await apiRequest("/v1/status");
+        view.data = payload;
+      }
       view.status = "ready";
       render();
     } catch (error) {
@@ -1218,6 +1229,7 @@
     renderView();
     renderProfileMenu();
     renderModal();
+    updateLivePolling();
   }
 
   function renderView() {
@@ -1229,6 +1241,7 @@
         models: "See your model catalog",
         workspaces: "Your work, in one place",
         status: "Connect to your server",
+        live: "Watch your server in real time",
         profile: "Welcome to outo-llms",
       };
       const title = titles[state.activeView] || titles.models;
@@ -1249,6 +1262,8 @@
       }
     } else if (state.activeView === "status") {
       elements.viewRoot.append(renderStatus());
+    } else if (state.activeView === "live") {
+      elements.viewRoot.append(renderLive());
     } else {
       elements.viewRoot.append(renderProfile());
     }
@@ -1735,7 +1750,7 @@
   }
 
   function switchView(viewName) {
-    if (!["models", "workspaces", "status", "profile"].includes(viewName)) {
+    if (!["models", "workspaces", "status", "live", "profile"].includes(viewName)) {
       return;
     }
     state.activeView = viewName;
@@ -1770,6 +1785,8 @@
       loadWorkspaceData();
     } else if (state.activeView === "status") {
       loadView("status");
+    } else if (state.activeView === "live") {
+      loadView("live");
     }
   }
 
@@ -1910,10 +1927,249 @@
     }
   }
 
+  function renderLive() {
+    const view = state.views.live;
+    const wrapper = node("div", "view view--live");
+    wrapper.append(
+      pageHeader(
+        "OBSERVABILITY",
+        "Live activity",
+        "Real-time engine status, in-flight inference, and per-model call counts. Refreshes every 5 seconds while this view is open.",
+        retryButton("retry-view", "Refresh"),
+      ),
+    );
+
+    const hasData = isObject(view.data);
+    if (!hasData) {
+      if (view.status === "loading" || view.status === "idle") {
+        wrapper.append(loadingState("Loading live activity"));
+        return wrapper;
+      }
+      if (view.status === "error") {
+        wrapper.append(errorState(view.error, retryButton("retry-view")));
+        return wrapper;
+      }
+    }
+
+    if (view.status === "error" && view.error) {
+      const banner = node("div", "live-banner live-banner--error");
+      banner.append(
+        node("span", "live-banner__dot"),
+        node("span", "live-banner__text", "Live refresh failed. Showing the last known values."),
+        retryButton("retry-view", "Retry now"),
+      );
+      wrapper.append(banner);
+    }
+
+    const stack = node("div", "live-stack");
+    stack.append(
+      renderLiveEngineCard(view),
+      renderLiveInflightCard(view),
+      renderLiveModelsCard(view),
+    );
+    wrapper.append(stack);
+    return wrapper;
+  }
+
+  function renderLiveEngineCard(view) {
+    const data = isObject(view.data) ? view.data : {};
+    const engineData = isObject(data.engine) ? data.engine : {};
+    const card = node("section", "card live-card live-card--engine");
+    const heading = node("div", "card-heading");
+    const headingCopy = node("div");
+    headingCopy.append(
+      node("p", "eyebrow", "ENGINE"),
+      node("h3", "card-title", "Loaded model"),
+      node("p", "card-description", "Active engine and the model it currently has in memory."),
+    );
+    const processBadge = statusBadge(Boolean(engineData.running), "Running", "Stopped");
+    setAttributes(processBadge, { "aria-label": engineData.running ? "Engine is running" : "Engine is stopped" });
+    heading.append(headingCopy, processBadge);
+    card.append(heading);
+
+    const list = node("dl", "status-list");
+    const fields = [
+      ["Engine", safeString(engineData.engine, "—")],
+      ["Model", safeString(engineData.model, "no model loaded")],
+      ["Port", safeString(engineData.port, "—")],
+      ["Loaded at", formatDate(engineData.loaded_at)],
+      ["Uptime", humanizeUptime(engineData.uptime_seconds)],
+    ];
+    fields.forEach(([label, value]) => {
+      list.append(node("dt", "status-list__term", label));
+      list.append(node("dd", "status-list__value", value));
+    });
+    card.append(list);
+    return card;
+  }
+
+  function renderLiveInflightCard(view) {
+    const data = isObject(view.data) ? view.data : {};
+    const inflight = isObject(data.inflight) ? data.inflight : { count: 0, requests: [] };
+    const count = Number(inflight.count) || 0;
+    const requests = Array.isArray(inflight.requests) ? inflight.requests : [];
+
+    const card = node("section", "card live-card live-card--inflight");
+    const heading = node("div", "card-heading");
+    const headingCopy = node("div");
+    headingCopy.append(
+      node("p", "eyebrow", "TRAFFIC"),
+      node("h3", "card-title", "In-flight requests"),
+      node("p", "card-description", "Active inference calls currently being processed right now."),
+    );
+    const badge = node("span", count > 0 ? "status-badge status-badge--accent" : "count-badge");
+    setAttributes(badge, {
+      "aria-label": `${count} ${count === 1 ? "request" : "requests"} in flight`,
+    });
+    badge.append(node("span", "", String(count)));
+    heading.append(headingCopy, badge);
+    card.append(heading);
+
+    if (!requests.length) {
+      card.append(
+        emptyState(
+          "No requests in flight",
+          "Inference is idle right now. New calls will appear here as they arrive.",
+        ),
+      );
+      return card;
+    }
+
+    const wrap = node("div", "table-wrap");
+    const table = node("table", "data-table data-table--live-inflight");
+    setAttributes(table, { "aria-label": "In-flight inference requests" });
+    table.append(node("caption", "sr-only", "In-flight inference requests"));
+    const head = node("thead");
+    const headRow = node("tr");
+    ["User", "Workspace", "Model", "Endpoint", "Elapsed"].forEach((label) => headRow.append(node("th", "", label)));
+    head.append(headRow);
+    const body = node("tbody");
+    requests.forEach((req) => {
+      const elapsed = Number(req?.elapsed_seconds);
+      const elapsedText = Number.isFinite(elapsed) ? `${elapsed.toFixed(1)}s` : "—";
+      const row = node("tr");
+      row.append(
+        node("td", "model-name", safeString(req?.user, "—")),
+        node("td", "", safeString(req?.workspace, "—")),
+        node("td", "model-name", safeString(req?.model, "—")),
+        node("td", "", safeString(req?.endpoint, "—")),
+        node("td", "numeric-cell", elapsedText),
+      );
+      body.append(row);
+    });
+    table.append(head, body);
+    wrap.append(table);
+    card.append(wrap);
+    return card;
+  }
+
+  function renderLiveModelsCard(view) {
+    const data = isObject(view.data) ? view.data : {};
+    const models = Array.isArray(data.models) ? data.models : [];
+
+    const card = node("section", "card live-card live-card--models");
+    const heading = node("div", "card-heading");
+    const headingCopy = node("div");
+    headingCopy.append(
+      node("p", "eyebrow", "CALL TOTALS"),
+      node("h3", "card-title", "Model calls"),
+      node("p", "card-description", "Cumulative inference calls and tokens recorded for each model."),
+    );
+    heading.append(headingCopy);
+    card.append(heading);
+
+    if (!models.length) {
+      card.append(node("p", "muted-copy live-empty", "No inference calls recorded yet."));
+      return card;
+    }
+
+    const wrap = node("div", "table-wrap table-wrap--usage");
+    const table = node("table", "data-table");
+    setAttributes(table, { "aria-label": "Model call totals" });
+    table.append(node("caption", "sr-only", "Model call totals"));
+    const head = node("thead");
+    const headRow = node("tr");
+    ["Model", "Requests", "Total tokens"].forEach((label) => headRow.append(node("th", "", label)));
+    head.append(headRow);
+    const body = node("tbody");
+    models.forEach((entry) => {
+      const row = node("tr");
+      row.append(
+        node("td", "model-name", safeString(entry?.model, "—")),
+        node("td", "numeric-cell", formatNumber(entry?.requests)),
+        node("td", "numeric-cell", formatNumber(entry?.total_tokens)),
+      );
+      body.append(row);
+    });
+    table.append(head, body);
+    wrap.append(table);
+    card.append(wrap);
+    return card;
+  }
+
+  function humanizeUptime(seconds) {
+    if (seconds === null || seconds === undefined) {
+      return "—";
+    }
+    const total = Number(seconds);
+    if (!Number.isFinite(total) || total < 0) {
+      return "—";
+    }
+    const totalSecs = Math.floor(total);
+    if (totalSecs < 60) {
+      return `${totalSecs}s`;
+    }
+    if (totalSecs < 3600) {
+      const minutes = Math.floor(totalSecs / 60);
+      const secs = totalSecs % 60;
+      return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
+    }
+    if (totalSecs < 86400) {
+      const hours = Math.floor(totalSecs / 3600);
+      const minutes = Math.floor((totalSecs % 3600) / 60);
+      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+    }
+    const days = Math.floor(totalSecs / 86400);
+    const hours = Math.floor((totalSecs % 86400) / 3600);
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+
+  function updateLivePolling() {
+    if (state.liveTimer) {
+      window.clearInterval(state.liveTimer);
+      state.liveTimer = 0;
+    }
+    const shouldRun = state.activeView === "live"
+      && Boolean(state.sessionToken)
+      && typeof document !== "undefined"
+      && !document.hidden;
+    if (shouldRun) {
+      state.liveTimer = window.setInterval(() => {
+        if (state.activeView === "live" && state.sessionToken && !document.hidden) {
+          loadView("live");
+        } else {
+          updateLivePolling();
+        }
+      }, 5000);
+    }
+  }
+
+  function onVisibilityChange() {
+    if (document.hidden) {
+      updateLivePolling();
+      return;
+    }
+    updateLivePolling();
+    if (state.activeView === "live" && state.sessionToken) {
+      loadView("live");
+    }
+  }
+
   function initialize() {
     document.addEventListener("click", onClick);
     document.addEventListener("submit", onSubmit);
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     render();
     if (migratedLegacyKey) {
       showNotice(SIGN_IN_MIGRATION_NOTICE);
