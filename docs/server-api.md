@@ -98,6 +98,47 @@ Response JSON, HTTP `200`:
 
 The `pid`, `model`, `port`, and `base_url` fields are `null` when the engine has no corresponding runtime value.
 
+### `GET /v1/live`
+
+Returns real-time activity: the currently loaded engine model, in-flight inference requests, and server-wide per-model call totals. Requires a session token Bearer. The web GUI's Live tab polls this endpoint.
+
+```bash
+curl -s "$BASE_URL/v1/live" \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "engine": {
+    "engine": "llamacpp",
+    "running": true,
+    "model": "deepseek-v4-flash",
+    "port": 8612,
+    "loaded_at": "2026-07-23T05:00:00.123456+00:00",
+    "uptime_seconds": 3600
+  },
+  "inflight": {
+    "count": 1,
+    "requests": [
+      {
+        "user": "luke",
+        "workspace": "default",
+        "model": "deepseek-v4-flash",
+        "endpoint": "chat/completions",
+        "elapsed_seconds": 8.2
+      }
+    ]
+  },
+  "models": [
+    {"model": "deepseek-v4-flash", "requests": 12, "total_tokens": 45678}
+  ]
+}
+```
+
+`model`, `port`, `loaded_at`, and `uptime_seconds` are `null` when no engine is running. `inflight.requests` lists requests currently being proxied (a streaming request stays listed until its stream finishes). `models` aggregates every workspace, ordered by request count.
+
 ## Account
 
 > **Breaking change in 0.3.0.** Signup and login now take a password. The
