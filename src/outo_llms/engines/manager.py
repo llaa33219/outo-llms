@@ -280,6 +280,14 @@ class EngineManager:
         else:
             repo = model.source
             candidates = self._list_gguf_files(python, model.source)
+            if len(candidates) > 1:
+                standalone = [
+                    candidate
+                    for candidate in candidates
+                    if "mmproj" not in candidate.lower()
+                ]
+                if standalone:
+                    candidates = standalone
             if len(candidates) == 1:
                 filename = candidates[0]
             else:
@@ -526,4 +534,3 @@ class EngineManager:
     def _run_pip(argv: list[str], on_event: Callable[[str], None] | None) -> None:
         """Stream a pip invocation, forwarding each line to ``on_event``."""
         EngineManager._run_streaming(argv, on_event, label="pip install")
-                                                                                                                                                                                                                                                                                                       
