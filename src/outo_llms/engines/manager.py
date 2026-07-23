@@ -264,6 +264,12 @@ class EngineManager:
         ValueError for unknown engines and RuntimeError when pip fails.
         """
         adapter = get_adapter(name)
+        running = self._live_pid(name)
+        if running is not None:
+            consent.announce(
+                f"stop running engine '{name}' before reinstall", f"pid {running}"
+            )
+            self.stop()
         engine_dir = self._engine_dir(name)
         venv_dir = engine_dir / "venv"
         paths.ensure_dirs()
@@ -283,8 +289,11 @@ class EngineManager:
 
         requirements = ", ".join(adapter.pip_requirements)
         consent.announce(f"install {adapter.display_name} into the venv", requirements)
+        pip_args = [str(python), "-m", "pip", "install"]
+        if env is not None:
+            pip_args += ["--force-reinstall", "--no-cache-dir"]
         self._run_streaming(
-            [str(python), "-m", "pip", "install", *adapter.pip_requirements],
+            [*pip_args, *adapter.pip_requirements],
             on_event,
             env=env,
             label="pip install",
@@ -461,6 +470,22 @@ class EngineManager:
         if not snapshot_dir:
             raise RuntimeError(f"could not resolve local files for {repo}")
         return ModelRef(name=model.name, source=f"{snapshot_dir}/{first}", kind=model.kind)
+
+    def reset(self) -> None:
+        """Force-stop every engine and clear all runtime state files.
+
+        The model registry and downloaded weights are untouched; the next
+        request starts a completely fresh engine process.
+        """
+        for name in self.available():
+            pid = self._live_pid(name)
+            if pid is not None:
+                consent.announce(f"stop engine '{name}'", f"pid {pid}")
+                process.kill_pid(pid)
+            process.remove_pid(self._pid_path(name))
+            self._port_path(name).unlink(missing_ok=True)
+            self._model_path(name).unlink(missing_ok=True)
+        consent.log_action("reset_engine", "all engines stopped, state cleared")
 
     def stop(self) -> None:
         """Stop the current engine (if running) and clear its state files."""

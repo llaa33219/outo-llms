@@ -215,6 +215,21 @@ def backend(
         )
 
 
+@engine_app.command("reset")
+def reset() -> None:
+    """Force-stop engines and clear runtime state (registry/weights kept)."""
+    if not consent.confirm(
+        "Stop all engine processes and clear engine runtime state?", default=False
+    ):
+        console.print("aborted - nothing was changed.")
+        return
+    _manager().reset()
+    console.print(
+        "[green]engine state reset.[/] model registry and downloaded weights are "
+        "untouched; the next request starts a fresh engine."
+    )
+
+
 @engine_app.command("status")
 def engine_status() -> None:
     """Show the active engine's runtime status."""
