@@ -85,6 +85,53 @@ def install(
     console.print(f"[green]engine '{target}' installed.[/]")
 
 
+_PM_DETECT: list[tuple[str, str]] = [
+    ("apt", "apt-get"),
+    ("dnf", "dnf"),
+    ("pacman", "pacman"),
+    ("xbps", "xbps-install"),
+    ("apk", "apk"),
+]
+
+_PM_COMMANDS: dict[str, list[str]] = {
+    "apt": ["apt-get", "install", "-y"],
+    "dnf": ["dnf", "install", "-y"],
+    "pacman": ["pacman", "-S", "--needed", "--noconfirm"],
+    "xbps": ["xbps-install", "-Sy"],
+    "apk": ["apk", "add"],
+}
+
+_BACKEND_PACKAGES: dict[str, dict[str, list[str]]] = {
+    "vulkan": {
+        "apt": ["libvulkan-dev", "glslc", "spirv-headers"],
+        "dnf": ["vulkan-headers", "vulkan-loader-devel", "glslc", "spirv-headers-devel"],
+        "pacman": ["vulkan-headers", "vulkan-icd-loader", "shaderc", "spirv-headers"],
+        "xbps": ["Vulkan-Headers", "vulkan-loader", "vulkan-loader-devel", "shaderc", "SPIRV-Headers"],
+        "apk": ["vulkan-headers", "vulkan-loader-dev", "shaderc", "spirv-headers"],
+    },
+    "cuda": {
+        "apt": ["nvidia-cuda-toolkit"],
+        "dnf": ["cuda-toolkit"],  # needs NVIDIA's cuda-<distro>.repo configured
+        "pacman": ["cuda"],
+    },
+    "rocm": {
+        "apt": ["hipcc"],
+        "dnf": ["hipcc", "rocm-hip-devel"],
+        "pacman": ["rocm-hip-sdk"],
+    },
+}
+
+
+def _detect_package_manager() -> str | None:
+    """Detect the system package manager for toolchain offers."""
+    import shutil
+
+    for name, binary in _PM_DETECT:
+        if shutil.which(binary) is not None:
+            return name
+    return None
+
+
 def _offer_backend_deps(
     exc: RuntimeError | ValueError, manager: EngineManager, target: str
 ) -> bool:
@@ -93,13 +140,29 @@ def _offer_backend_deps(
 
     if not isinstance(exc, BackendDepsError):
         return False
-    packages = " ".join(exc.packages)
+    packages_by_pm = _BACKEND_PACKAGES.get(exc.backend, {})
+    pm = _detect_package_manager()
+    packages = packages_by_pm.get(pm) if pm is not None else None
+    if packages is None or pm is None:
+        console.print(
+            f"[yellow]backend '{exc.backend}' needs build tools ({exc.tool}) "
+            "but this system's package manager is unsupported or has no package "
+            "for it.[/] Install the toolchain manually, or pick the CPU build "
+            "with `outo-llms engine backend cpu` and re-run install."
+        )
+        raise typer.Exit(1) from exc
     console.print(
         f"[yellow]backend '{exc.backend}' needs build tools ({exc.tool}).[/] "
-        f"They can be installed system-wide: sudo apt-get install -y {packages}"
+        f"They can be installed system-wide ({pm}): "
+        f"sudo {' '.join(_PM_COMMANDS[pm])} {' '.join(packages)}"
     )
+    if pm == "dnf" and exc.backend == "cuda":
+        console.print(
+            "[dim]note: cuda-toolkit requires NVIDIA's cuda-<distro>.repo to be "
+            "configured first (Fedora's own repos do not ship CUDA).[/]"
+        )
     rc = consent.run_system(
-        ["sudo", "apt-get", "install", "-y", *exc.packages],
+        ["sudo", *_PM_COMMANDS[pm], *packages],
         reason=f"install the {exc.backend} build toolchain for llama.cpp",
         ask=True,
     )

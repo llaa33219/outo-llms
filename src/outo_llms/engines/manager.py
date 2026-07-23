@@ -134,13 +134,11 @@ class KindMismatchError(RuntimeError):
 class BackendDepsError(RuntimeError):
     """Build tools for the selected GPU backend are missing."""
 
-    def __init__(self, backend: str, tool: str, packages: list[str]) -> None:
+    def __init__(self, backend: str, tool: str) -> None:
         self.backend = backend
         self.tool = tool
-        self.packages = packages
         super().__init__(
-            f"backend '{backend}' needs '{tool}' on PATH; "
-            f"install with: sudo apt-get install -y {' '.join(packages)} "
+            f"backend '{backend}' needs '{tool}' on PATH "
             f"(or pick another backend: outo-llms engine backend cpu)"
         )
 
@@ -148,28 +146,20 @@ class BackendDepsError(RuntimeError):
 class _BackendSpec(TypedDict):
     cmake: str
     tool: str
-    packages: list[str]
 
 
 _BACKEND_BUILD: dict[str, _BackendSpec] = {
-    "vulkan": {
-        "cmake": "GGML_VULKAN",
-        "tool": "glslc",
-        "packages": ["libvulkan-dev", "glslang-tools"],
-    },
-    "cuda": {
-        "cmake": "GGML_CUDA",
-        "tool": "nvcc",
-        "packages": ["nvidia-cuda-toolkit"],
-    },
-    "rocm": {
-        "cmake": "GGML_HIP",
-        "tool": "hipcc",
-        "packages": ["rocm-hip-sdk"],
-    },
+    "vulkan": {"cmake": "GGML_VULKAN", "tool": "glslc"},
+    "cuda": {"cmake": "GGML_CUDA", "tool": "nvcc"},
+    "rocm": {"cmake": "GGML_HIP", "tool": "hipcc"},
 }
 
 BACKEND_NAMES = ["vulkan", "cuda", "rocm", "cpu"]
+
+_KNOWN_TOOL_DIRS: dict[str, list[str]] = {
+    "nvcc": ["/opt/cuda/bin"],
+    "hipcc": ["/opt/rocm/bin"],
+}
 
 
 def _base_url(port: int) -> str:
@@ -325,8 +315,14 @@ class EngineManager:
                 f"unknown backend {backend!r} (choose from {', '.join(BACKEND_NAMES)})"
             )
         tool = spec["tool"]
+        tool_dir: str | None = None
         if shutil.which(tool) is None:
-            raise BackendDepsError(backend, tool, spec["packages"])
+            for candidate in _KNOWN_TOOL_DIRS.get(tool, []):
+                if (Path(candidate) / tool).is_file():
+                    tool_dir = candidate
+                    break
+            if tool_dir is None:
+                raise BackendDepsError(backend, tool)
         consent.announce(
             f"build {adapter.display_name} with {backend.upper()} support",
             "compiles from source - this can take several minutes",
@@ -334,6 +330,8 @@ class EngineManager:
         env = os.environ.copy()
         env["CMAKE_ARGS"] = f"-D{spec['cmake']}=on"
         env["FORCE_CMAKE"] = "1"
+        if tool_dir is not None:
+            env["PATH"] = f"{tool_dir}:{env.get('PATH', '')}"
         return env
 
     # -- run / stop ------------------------------------------------------
