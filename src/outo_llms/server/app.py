@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException
 import outo_llms
 
 from . import db, proxy
-from .routes import account, keys, status, usage, workspaces
+from .routes import account, keys, live, status, usage, workspaces
 
 _STATIC_DIR = Path(__file__).parent / "ui" / "static"
 _INDEX_FILE = "index.html"
@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(keys.router)
     app.include_router(usage.router)
     app.include_router(status.router)
+    app.include_router(live.router)
     app.include_router(proxy.router)
 
     @app.get("/healthz")

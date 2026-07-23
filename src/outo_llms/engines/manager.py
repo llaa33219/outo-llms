@@ -187,6 +187,23 @@ class EngineManager:
             return None
         return self._read_model(name)
 
+    def loaded_at(self) -> str | None:
+        """ISO-8601 UTC timestamp of when the running model was loaded.
+
+        Derived from the mtime of the active engine's ``<name>.model``
+        state file, which is written each time the engine is (re)started
+        with a model. None when the engine is not running or the file is
+        missing.
+        """
+        name = self.current_name()
+        if self._live_pid(name) is None:
+            return None
+        try:
+            mtime = self._model_path(name).stat().st_mtime
+        except OSError:
+            return None
+        return dt.datetime.fromtimestamp(mtime, dt.timezone.utc).isoformat()
+
     def status(self) -> dict[str, str | bool | int | None]:
         """Snapshot of the current engine: installed/running/pid/model/port."""
         name = self.current_name()

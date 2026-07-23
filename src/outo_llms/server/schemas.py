@@ -106,3 +106,37 @@ class StatusOut(BaseModel):
     server: ServerInfo
     engine: EngineStatus
     counts: Counts
+
+
+class LiveEngine(BaseModel):
+    engine: str
+    running: bool
+    model: str | None
+    port: int | None
+    loaded_at: str | None
+    uptime_seconds: int | None
+
+
+class InflightRequest(BaseModel):
+    user: str
+    workspace: str
+    model: str
+    endpoint: str
+    elapsed_seconds: float
+
+
+class Inflight(BaseModel):
+    count: int
+    requests: list[InflightRequest]
+
+
+class ModelCalls(BaseModel):
+    model: str
+    requests: int
+    total_tokens: int
+
+
+class LiveOut(BaseModel):
+    engine: LiveEngine
+    inflight: Inflight
+    models: list[ModelCalls]

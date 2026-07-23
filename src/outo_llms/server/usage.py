@@ -93,3 +93,26 @@ def usage_summary_for_user(user_id: int) -> dict[str, object]:
             (user_id,),
         ).fetchall()
     return _build_summary("all", rows)
+
+
+def usage_by_model() -> list[dict[str, object]]:
+    """Server-wide per-model totals across every workspace.
+
+    Ordered by request count descending (model name ascending on ties);
+    used by ``GET /v1/live`` to show which models carry the load.
+    """
+    db.init_db()
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT model, COUNT(*) AS requests,"
+            " COALESCE(SUM(total_tokens), 0) AS total_tokens"
+            " FROM usage GROUP BY model ORDER BY requests DESC, model ASC"
+        ).fetchall()
+    return [
+        {
+            "model": str(row["model"]),
+            "requests": int(row["requests"]),
+            "total_tokens": int(row["total_tokens"]),
+        }
+        for row in rows
+    ]

@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..engines.base import ModelRef
-from . import accounts, registry, usage
+from . import accounts, live, registry, usage
 from .deps import SessionOrWorkspaceDep, WorkspaceDep, openai_error
 
 router = APIRouter(prefix="/v1", tags=["proxy"])
@@ -125,6 +125,7 @@ async def _stream_with_accounting(
     upstream: httpx.Response,
     ctx: accounts.WorkspaceContext,
     model: str,
+    request_id: int,
 ) -> AsyncIterator[bytes]:
     chunks: list[bytes] = []
     try:
@@ -134,6 +135,7 @@ async def _stream_with_accounting(
     finally:
         await stream_ctx.__aexit__(None, None, None)
         await client.aclose()
+        live.end(request_id)
     try:
         # Usage accounting is best-effort: it must never break or delay the stream.
         text = b"".join(chunks).decode("utf-8", errors="replace")
@@ -159,7 +161,11 @@ async def _stream_with_accounting(
 
 
 async def _forward_stream(
-    url: str, body: dict[str, object], ctx: accounts.WorkspaceContext, model: str
+    url: str,
+    body: dict[str, object],
+    ctx: accounts.WorkspaceContext,
+    model: str,
+    request_id: int,
 ) -> StreamingResponse:
     stream_options = body.get("stream_options")
     merged = dict(stream_options) if isinstance(stream_options, dict) else {}
@@ -172,9 +178,10 @@ async def _forward_stream(
         upstream = await stream_ctx.__aenter__()
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         await client.aclose()
+        live.end(request_id)
         raise openai_error(502, f"could not connect to engine: {exc}") from exc
     return StreamingResponse(
-        _stream_with_accounting(client, stream_ctx, upstream, ctx, model),
+        _stream_with_accounting(client, stream_ctx, upstream, ctx, model, request_id),
         status_code=upstream.status_code,
         media_type="text/event-stream",
     )
@@ -187,11 +194,19 @@ async def _forward(
     if not isinstance(body, dict):
         raise openai_error(400, "request body must be a JSON object")
     model_name, model_ref = _resolve_model(body)
-    base_url = _ensure_base_url(model_ref)
+    request_id = live.begin(ctx.username, ctx.workspace_name, model_name, endpoint)
+    try:
+        base_url = _ensure_base_url(model_ref)
+    except Exception:
+        live.end(request_id)
+        raise
     url = f"{base_url}/{endpoint}"
     if body.get("stream"):
-        return await _forward_stream(url, body, ctx, model_name)
-    return await _forward_nonstream(url, body, ctx, model_name)
+        return await _forward_stream(url, body, ctx, model_name, request_id)
+    try:
+        return await _forward_nonstream(url, body, ctx, model_name)
+    finally:
+        live.end(request_id)
 
 
 @router.post("/chat/completions", response_model=None)
