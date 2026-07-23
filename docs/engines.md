@@ -118,12 +118,20 @@ GPU acceleration is the default. llama.cpp is built from source with one of thes
 
 | Backend | Default | Build requirement | Notes |
 | --- | --- | --- | --- |
-| `vulkan` | yes | Vulkan SDK (`libvulkan-dev`, `glslang-tools`) | Broadest compatibility: NVIDIA, AMD, Intel, and ARM GPUs through the Vulkan API |
+| `vulkan` | yes | Vulkan SDK (see below) | Broadest compatibility: NVIDIA, AMD, Intel, and ARM GPUs through the Vulkan API |
 | `cuda` | no | CUDA toolkit (`nvcc`) | NVIDIA-only, typically the fastest option on NVIDIA |
 | `rocm` | no | ROCm (`hipcc`) | AMD GPUs |
 | `cpu` | no | none | Prebuilt wheel, no acceleration |
 
-Select with `outo-llms engine backend <name>`, then rebuild with `outo-llms engine install llamacpp` (source builds take several minutes). When build tools are missing, install offers to install them via `sudo apt-get` (announced, confirmed, logged) and retries once. At serve time outo-llms passes `--n_gpu_layers -1` for GPU backends, so all layers offload; `--cpu` mode passes nothing. `outo-llms engine status` shows the active backend.
+Select with `outo-llms engine backend <name>`, then rebuild with `outo-llms engine install llamacpp` (source builds take several minutes). When build tools are missing, install offers to install them for the detected package manager (announced, confirmed, logged) and retries once. Verified package sets per distro:
+
+| Backend | apt (Debian/Ubuntu) | dnf (Fedora) | pacman (Arch) | xbps (Void) | apk (Alpine) |
+| --- | --- | --- | --- | --- | --- |
+| `vulkan` | `libvulkan-dev glslc spirv-headers` | `vulkan-headers vulkan-loader-devel glslc spirv-headers-devel` | `vulkan-headers vulkan-icd-loader shaderc spirv-headers` | `Vulkan-Headers vulkan-loader vulkan-loader-devel shaderc SPIRV-Headers` | `vulkan-headers vulkan-loader-dev shaderc spirv-headers` |
+| `cuda` | `nvidia-cuda-toolkit` | `cuda-toolkit` (needs NVIDIA's cuda repo) | `cuda` | unsupported | unsupported |
+| `rocm` | `hipcc` | `hipcc rocm-hip-devel` | `rocm-hip-sdk` | unsupported | unsupported |
+
+Tools installed outside PATH (`/opt/cuda/bin`, `/opt/rocm/bin`) are detected and added to the build PATH automatically. At serve time outo-llms passes `--n_gpu_layers -1` for GPU backends, so all layers offload; `--cpu` mode passes nothing. `outo-llms engine status` shows the active backend.
 
 vLLM is GPU-native by design (CUDA on NVIDIA; ROCm builds exist upstream). It has no Vulkan path; on machines without a supported GPU, use llama.cpp with the `cpu` backend instead.
 

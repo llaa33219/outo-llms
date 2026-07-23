@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.5.0`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.5.1`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`
@@ -198,7 +198,7 @@ outo-llms engine install [NAME]
 
 Creates or recreates the selected engine's isolated venv, upgrades pip in that venv, installs the adapter requirements, and writes its `INSTALLED` marker. If `NAME` is omitted, the active engine is installed.
 
-For llama.cpp the active [backend](#outo-llms-engine-backend) applies: GPU backends compile `llama-cpp-python` from source (`FORCE_CMAKE=1` with the backend's `GGML_*` flag, several minutes); the `cpu` backend uses the fast prebuilt wheel. When the backend's build tools are missing, the command offers to install them (`sudo apt-get install -y ...`, announced and confirmed) and retries once; declining exits with manual instructions.
+For llama.cpp the active [backend](#outo-llms-engine-backend) applies: GPU backends compile `llama-cpp-python` from source (`FORCE_CMAKE=1` with the backend's `GGML_*` flag, several minutes); the `cpu` backend uses the fast prebuilt wheel. When the backend's build tools are missing, the command detects the system package manager (apt, dnf, pacman, xbps, apk), offers to install the matching packages with sudo (announced and confirmed), and retries once; declining exits with manual instructions.
 
 ```bash
 # Install the active engine
