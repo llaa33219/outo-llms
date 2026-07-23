@@ -118,7 +118,7 @@ outo-llms models add tinyllama \
 > weights immediately into the shared Hugging Face cache. The first inference
 > request no longer has to fetch them.
 
-`outo-llms models add` runs the active engine's isolated venv and calls `huggingface_hub.snapshot_download` (for `hf` sources) or pulls a single file (for `repo:file` GGUF sources) into the standard shared cache at `~/.cache/huggingface`. Progress is streamed to the terminal. Subsequent `models add` and `models download` calls for the same files hit the cache and are no-ops; only missing files are fetched.
+`outo-llms models add` runs the active engine's isolated venv and calls `huggingface_hub.snapshot_download` (for `hf` sources) or pulls a single file (for `repo:file` GGUF sources) into the standard shared cache at `~/.cache/huggingface`. Progress is streamed to the terminal as a live-updating bar (percentage, speed, ETA - tqdm's carriage-return updates are rendered in place). Subsequent `models add` and `models download` calls for the same files hit the cache and are no-ops; only missing files are fetched.
 
 Downloads need `huggingface-hub` inside the engine venv. New engine installs include it; if a venv predates that requirement, outo-llms announces it, installs `huggingface-hub` into the venv (logged in the action log), and retries once.
 
