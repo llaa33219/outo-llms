@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.3.10`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.3.11`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`
@@ -121,8 +121,13 @@ outo-llms models download NAME
 
 Downloads (or re-downloads) the weights for an already-registered model into the shared Hugging Face cache. The operation is idempotent: a second run is a no-op against the cache and only fetches missing files.
 
+| Option | Default | Description |
+| --- | --- | --- |
+| `--force`, `-f` | off | Bypass the cache and re-download every weight file (repairs corrupted or truncated downloads). |
+
 ```bash
 outo-llms models download tinyllama
+outo-llms models download tinyllama --force   # repair: fetch everything again
 ```
 
 If the named model is not in the registry, the command exits with an error. To select a different file inside a repository, re-register with the right `--source repo:file` (or use the CLI to update the source) and run download again.
