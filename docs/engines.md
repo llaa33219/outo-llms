@@ -112,6 +112,21 @@ outo-llms models add tinyllama \
   --kind hf
 ```
 
+## GPU acceleration (backends)
+
+GPU acceleration is the default. llama.cpp is built from source with one of these backends; `cpu` is the opt-out (fast prebuilt wheel, no GPU):
+
+| Backend | Default | Build requirement | Notes |
+| --- | --- | --- | --- |
+| `vulkan` | yes | Vulkan SDK (`libvulkan-dev`, `glslang-tools`) | Broadest compatibility: NVIDIA, AMD, Intel, and ARM GPUs through the Vulkan API |
+| `cuda` | no | CUDA toolkit (`nvcc`) | NVIDIA-only, typically the fastest option on NVIDIA |
+| `rocm` | no | ROCm (`hipcc`) | AMD GPUs |
+| `cpu` | no | none | Prebuilt wheel, no acceleration |
+
+Select with `outo-llms engine backend <name>`, then rebuild with `outo-llms engine install llamacpp` (source builds take several minutes). When build tools are missing, install offers to install them via `sudo apt-get` (announced, confirmed, logged) and retries once. At serve time outo-llms passes `--n_gpu_layers -1` for GPU backends, so all layers offload; `--cpu` mode passes nothing. `outo-llms engine status` shows the active backend.
+
+vLLM is GPU-native by design (CUDA on NVIDIA; ROCm builds exist upstream). It has no Vulkan path; on machines without a supported GPU, use llama.cpp with the `cpu` backend instead.
+
 ## Model downloads
 
 > **Breaking change in 0.3.0.** `outo-llms models add` now downloads the

@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.4.0`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.5.0`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`
@@ -198,6 +198,8 @@ outo-llms engine install [NAME]
 
 Creates or recreates the selected engine's isolated venv, upgrades pip in that venv, installs the adapter requirements, and writes its `INSTALLED` marker. If `NAME` is omitted, the active engine is installed.
 
+For llama.cpp the active [backend](#outo-llms-engine-backend) applies: GPU backends compile `llama-cpp-python` from source (`FORCE_CMAKE=1` with the backend's `GGML_*` flag, several minutes); the `cpu` backend uses the fast prebuilt wheel. When the backend's build tools are missing, the command offers to install them (`sudo apt-get install -y ...`, announced and confirmed) and retries once; declining exits with manual instructions.
+
 ```bash
 # Install the active engine
 outo-llms engine install
@@ -206,7 +208,21 @@ outo-llms engine install
 outo-llms engine install vllm
 ```
 
-The installed requirements are `llama-cpp-python[server]>=0.2.90` for llama.cpp and `vllm>=0.6` for vLLM. The command streams pip output and announces the environment and package installation.
+The installed requirements are `llama-cpp-python[server]>=0.2.90` plus `huggingface-hub>=0.24` for llama.cpp and `vllm>=0.6` for vLLM. The command streams pip output and announces the environment and package installation.
+
+### `outo-llms engine backend`
+
+```text
+outo-llms engine backend {vulkan|cuda|rocm|cpu}
+```
+
+Selects the llama.cpp GPU backend (`vulkan` by default) and stops the running engine so the next request restarts it with the new flags. Rebuild with `outo-llms engine install llamacpp` afterwards; the command prints the exact reminder. GPU backends serve with `--n_gpu_layers -1`; `cpu` disables acceleration.
+
+```bash
+outo-llms engine backend cuda     # NVIDIA toolchain build
+outo-llms engine backend cpu      # no acceleration, prebuilt wheel
+outo-llms engine install llamacpp
+```
 
 ### `outo-llms engine status`
 
@@ -214,7 +230,7 @@ The installed requirements are `llama-cpp-python[server]>=0.2.90` for llama.cpp 
 outo-llms engine status
 ```
 
-Shows the active engine's `installed`, `running`, `pid`, `model`, `port`, and internal `base_url` values. It also shows API server running state and PID.
+Shows the active engine's `backend`, `installed`, `running`, `pid`, `model`, `port`, and internal `base_url` values. It also shows API server running state and PID.
 
 ```bash
 outo-llms engine status

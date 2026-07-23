@@ -29,7 +29,7 @@ Confirm the installed version:
 outo-llms version
 ```
 
-The current package version is `0.4.0`.
+The current package version is `0.5.0`.
 
 ## Operating system notes
 
@@ -42,6 +42,8 @@ The server binds to `0.0.0.0:443` with HTTPS by default, so the firewall prompt 
 ## Hardware notes
 
 llama.cpp can run on a CPU and is the practical default for CPU-friendly deployments. It serves GGUF models.
+
+GPU acceleration is enabled by default through the `vulkan` backend, which compiles llama-cpp-python from source and needs the Vulkan SDK (`sudo apt-get install -y libvulkan-dev glslang-tools`; setup offers to run this for you). Other backends (`cuda`, `rocm`) need their toolchains; `cpu` needs nothing. See [Engines](engines.md) for the backend table.
 
 vLLM is intended for GPU-backed deployments and effectively requires a compatible NVIDIA GPU for normal use. It serves Hugging Face model repositories and is the better choice when you need higher throughput from supported GPU hardware.
 
