@@ -93,6 +93,21 @@ def _shard_members(filename: str) -> list[str]:
     return [f"{prefix}-{index:05d}-of-{total}.gguf" for index in range(1, int(total) + 1)]
 
 
+def _split_progress(buffer: bytes) -> tuple[list[tuple[bytes, bytes]], bytes]:
+    """Split ``buffer`` into (segment, terminator) pairs on \\r and \\n.
+
+    Operates on bytes so tqdm's carriage returns survive; text mode would
+    translate them to \\n before we could see them.
+    """
+    parts: list[tuple[bytes, bytes]] = []
+    start = 0
+    for index, byte in enumerate(buffer):
+        if byte in (0x0D, 0x0A):
+            parts.append((buffer[start:index], buffer[index : index + 1]))
+            start = index + 1
+    return parts, buffer[start:]
+
+
 class EngineNotInstalledError(RuntimeError):
     """The active engine has no installed venv to download with."""
 
@@ -556,16 +571,36 @@ class EngineManager:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            text=True,
             env=env,
         ) as proc:
             assert proc.stdout is not None  # guaranteed by stdout=PIPE
-            for line in proc.stdout:
-                stripped = line.rstrip()
-                lines.append(stripped)
-                tail.append(stripped)
+            buffer = b""
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                buffer += chunk
+                parts, buffer = _split_progress(buffer)
+                for segment, terminator in parts:
+                    if not segment.strip():
+                        continue
+                    text = segment.decode("utf-8", errors="replace")
+                    if terminator == b"\r":
+                        # tqdm-style in-place update: forward marked with \r so
+                        # the CLI can redraw one line instead of scrolling.
+                        if on_event is not None:
+                            on_event("\r" + text)
+                    else:
+                        lines.append(text)
+                        tail.append(text)
+                        if on_event is not None:
+                            on_event(text)
+            if buffer.strip():
+                text = buffer.decode("utf-8", errors="replace")
+                lines.append(text)
+                tail.append(text)
                 if on_event is not None:
-                    on_event(stripped)
+                    on_event(text)
             returncode = proc.wait()
         if returncode != 0:
             raise RuntimeError(

@@ -22,7 +22,14 @@ models_app = typer.Typer(help="Manage the model registry.", no_args_is_help=True
 
 
 def _print_progress(line: str) -> None:
-    """Forward one download output line verbatim (no Rich markup parsing)."""
+    """Forward one download output line verbatim (no Rich markup parsing).
+
+    Lines marked with a leading ``\\r`` are tqdm-style in-place updates
+    and redraw the current terminal line instead of scrolling.
+    """
+    if line.startswith("\r"):
+        console.print(line, end="", markup=False, highlight=False)
+        return
     console.print(line, markup=False, highlight=False)
 
 
