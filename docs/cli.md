@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.5.1`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.6.0`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`
@@ -223,6 +223,20 @@ outo-llms engine backend cuda     # NVIDIA toolchain build
 outo-llms engine backend cpu      # no acceleration, prebuilt wheel
 outo-llms engine install llamacpp
 ```
+
+### `outo-llms engine reset`
+
+```text
+outo-llms engine reset
+```
+
+Force-stops every engine process and clears all engine runtime state files (PID, port, loaded-model records), returning to a fresh-start state. The model registry and downloaded weights are untouched; the next inference request starts a completely fresh engine. Asks for confirmation.
+
+```bash
+outo-llms engine reset
+```
+
+Use it after engine trouble, or when an old engine process lingers. Note that `engine install` also stops a running engine before reinstalling, and backend builds always use `--force-reinstall --no-cache-dir` so the rebuild actually happens.
 
 ### `outo-llms engine status`
 
