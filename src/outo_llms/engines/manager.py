@@ -44,13 +44,17 @@ for path in list_repo_files(sys.argv[1]):
 """
 
 _DOWNLOAD_SNIPPET = """\
+import os
 import sys
 
 from huggingface_hub import snapshot_download
 
 repo_id = sys.argv[1]
 allow_patterns = sys.argv[2:] if len(sys.argv) > 2 else None
-local_path = snapshot_download(repo_id=repo_id, allow_patterns=allow_patterns)
+force = os.environ.get("OUTO_FORCE_DOWNLOAD") == "1"
+local_path = snapshot_download(
+    repo_id=repo_id, allow_patterns=allow_patterns, force_download=force
+)
 print(f"weights ready at: {local_path}")
 """
 
@@ -382,6 +386,7 @@ class EngineManager:
         *,
         on_event: Callable[[str], None] | None = None,
         choose: Callable[[list[str]], str | None] | None = None,
+        force: bool = False,
     ) -> str:
         """Download ``model``'s weights into the shared Hugging Face cache.
 
@@ -449,12 +454,26 @@ class EngineManager:
                 filename = members[0]
 
         target = f"{repo}:{filename}" if filename is not None else repo
-        consent.announce(f"download '{model.name}' with {adapter.display_name}", target)
+        if force:
+            consent.announce(
+                f"re-download '{model.name}' with {adapter.display_name} "
+                f"(cache bypassed)",
+                target,
+            )
+        else:
+            consent.announce(f"download '{model.name}' with {adapter.display_name}", target)
         argv = [str(python), "-c", _DOWNLOAD_SNIPPET, repo]
         if filename is not None:
             argv.extend(members)
-        self._run_hf_snippet(argv, on_event, label="model download")
-        consent.log_action("download_model", f"{name}:{model.source}")
+        self._run_hf_snippet(
+            argv,
+            on_event,
+            label="model download",
+            extra_env={"OUTO_FORCE_DOWNLOAD": "1"} if force else None,
+        )
+        consent.log_action(
+            "download_model", f"{name}:{model.source}{' force' if force else ''}"
+        )
         return target
 
     # -- internals -------------------------------------------------------
@@ -530,14 +549,18 @@ class EngineManager:
         on_event: Callable[[str], None] | None,
         *,
         label: str,
+        extra_env: dict[str, str] | None = None,
     ) -> list[str]:
         """Run a huggingface_hub snippet, healing a missing module once.
 
         Engine venvs created before huggingface-hub became a requirement
         lack it; in that case install it into the venv and retry once.
         """
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
         try:
-            return self._run_streaming(argv, on_event, env=os.environ.copy(), label=label)
+            return self._run_streaming(argv, on_event, env=env, label=label)
         except RuntimeError as exc:
             if "No module named 'huggingface_hub'" not in str(exc):
                 raise
@@ -549,7 +572,7 @@ class EngineManager:
             [argv[0], "-m", "pip", "install", "huggingface-hub>=0.24"], on_event
         )
         consent.log_action("install_hf_hub", argv[0])
-        return self._run_streaming(argv, on_event, env=os.environ.copy(), label=label)
+        return self._run_streaming(argv, on_event, env=env, label=label)
 
     @staticmethod
     def _run_streaming(

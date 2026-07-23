@@ -91,7 +91,7 @@ def _print_kind_guidance(model: ModelRef, exc: KindMismatchError) -> None:
     )
 
 
-def _download_weights(name: str) -> bool:
+def _download_weights(name: str, *, force: bool = False) -> bool:
     """Download weights for registered model ``name`` via the active engine.
 
     Returns True when the weights are ready to serve. A missing engine or
@@ -112,7 +112,9 @@ def _download_weights(name: str) -> bool:
 
     manager = EngineManager()
     try:
-        target = manager.download_model(model, on_event=_print_progress, choose=_pick_gguf)
+        target = manager.download_model(
+            model, on_event=_print_progress, choose=_pick_gguf, force=force
+        )
     except EngineNotInstalledError:
         console.print(
             "[yellow]no engine installed yet;[/] weights will download on first use "
@@ -207,12 +209,18 @@ def add(
 @models_app.command("download")
 def download(
     name: str = typer.Argument(..., help="Registry name of the model to download."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Re-download all weights, ignoring the cache (repairs corrupted downloads).",
+    ),
 ) -> None:
     """Download a registered model's weights now (idempotent via the HF cache)."""
     from ...server import db
 
     db.init_db()
-    if _download_weights(name):
+    if _download_weights(name, force=force):
         console.print(f"[green]model '{name}' downloaded[/] - ready to serve.")
 
 
