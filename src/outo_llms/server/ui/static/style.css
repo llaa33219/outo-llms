@@ -382,6 +382,10 @@ input:focus-visible,
   animation: view-in 220ms ease-out both;
 }
 
+.view-root--refresh .view {
+  animation: none;
+}
+
 @keyframes view-in {
   from {
     opacity: 0;

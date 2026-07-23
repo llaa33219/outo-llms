@@ -30,6 +30,7 @@
 
   const state = {
     activeView: "models",
+    renderedView: "",
     sessionToken: readStoredSession(),
     cachedInferenceKeys: readStoredInferenceKeys(),
     authNotice: "",
@@ -1243,11 +1244,16 @@
         tab.dataset.view === state.activeView ? "true" : "false"
       );
     });
+    elements.viewRoot.classList.toggle(
+      "view-root--refresh",
+      state.renderedView === state.activeView
+    );
     renderNotice();
     renderView();
     renderProfileMenu();
     renderModal();
     updateLivePolling();
+    state.renderedView = state.activeView;
   }
 
   function renderView() {
