@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -24,6 +25,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+from typing import TypedDict
 
 import httpx
 
@@ -129,6 +131,47 @@ class KindMismatchError(RuntimeError):
         )
 
 
+class BackendDepsError(RuntimeError):
+    """Build tools for the selected GPU backend are missing."""
+
+    def __init__(self, backend: str, tool: str, packages: list[str]) -> None:
+        self.backend = backend
+        self.tool = tool
+        self.packages = packages
+        super().__init__(
+            f"backend '{backend}' needs '{tool}' on PATH; "
+            f"install with: sudo apt-get install -y {' '.join(packages)} "
+            f"(or pick another backend: outo-llms engine backend cpu)"
+        )
+
+
+class _BackendSpec(TypedDict):
+    cmake: str
+    tool: str
+    packages: list[str]
+
+
+_BACKEND_BUILD: dict[str, _BackendSpec] = {
+    "vulkan": {
+        "cmake": "GGML_VULKAN",
+        "tool": "glslc",
+        "packages": ["libvulkan-dev", "glslang-tools"],
+    },
+    "cuda": {
+        "cmake": "GGML_CUDA",
+        "tool": "nvcc",
+        "packages": ["nvidia-cuda-toolkit"],
+    },
+    "rocm": {
+        "cmake": "GGML_HIP",
+        "tool": "hipcc",
+        "packages": ["rocm-hip-sdk"],
+    },
+}
+
+BACKEND_NAMES = ["vulkan", "cuda", "rocm", "cpu"]
+
+
 def _base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/v1"
 
@@ -217,6 +260,7 @@ class EngineManager:
             "model": self.current_model(),
             "port": port,
             "base_url": _base_url(port) if port is not None else None,
+            "backend": config_mod.load_config().engine.backend,
         }
 
     # -- install / select ------------------------------------------------
@@ -235,6 +279,11 @@ class EngineManager:
         paths.ensure_dirs()
         engine_dir.mkdir(parents=True, exist_ok=True)
 
+        env: dict[str, str] | None = None
+        backend = config_mod.load_config().engine.backend
+        if name == "llamacpp" and backend != "cpu":
+            env = self._backend_env(name, adapter)
+
         consent.announce(f"create virtualenv for {adapter.display_name}", str(venv_dir))
         subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
 
@@ -244,7 +293,12 @@ class EngineManager:
 
         requirements = ", ".join(adapter.pip_requirements)
         consent.announce(f"install {adapter.display_name} into the venv", requirements)
-        self._run_pip([str(python), "-m", "pip", "install", *adapter.pip_requirements], on_event)
+        self._run_streaming(
+            [str(python), "-m", "pip", "install", *adapter.pip_requirements],
+            on_event,
+            env=env,
+            label="pip install",
+        )
 
         timestamp = dt.datetime.now().isoformat(timespec="seconds")
         self._marker(name).write_text(f"{timestamp}\n", encoding="utf-8")
@@ -261,6 +315,26 @@ class EngineManager:
         cfg.engine.name = name
         config_mod.save_config(cfg)
         consent.log_action("use_engine", name)
+
+    def _backend_env(self, name: str, adapter: EngineAdapter) -> dict[str, str]:
+        """Build env for a GPU-enabled source build; check the toolchain."""
+        backend = config_mod.load_config().engine.backend
+        spec = _BACKEND_BUILD.get(backend)
+        if spec is None:
+            raise RuntimeError(
+                f"unknown backend {backend!r} (choose from {', '.join(BACKEND_NAMES)})"
+            )
+        tool = spec["tool"]
+        if shutil.which(tool) is None:
+            raise BackendDepsError(backend, tool, spec["packages"])
+        consent.announce(
+            f"build {adapter.display_name} with {backend.upper()} support",
+            "compiles from source - this can take several minutes",
+        )
+        env = os.environ.copy()
+        env["CMAKE_ARGS"] = f"-D{spec['cmake']}=on"
+        env["FORCE_CMAKE"] = "1"
+        return env
 
     # -- run / stop ------------------------------------------------------
 
@@ -294,7 +368,14 @@ class EngineManager:
         port = self._free_port(adapter.default_port)
         log_path = paths.logs_dir() / f"engine-{name}.log"
         paths.ensure_dirs()
-        argv = adapter.serve_argv(self.venv_python(name), model, port, cfg.engine.extra_args)
+        extra_args = list(cfg.engine.extra_args)
+        if (
+            name == "llamacpp"
+            and cfg.engine.backend != "cpu"
+            and not any(arg.startswith("--n_gpu_layers") for arg in extra_args)
+        ):
+            extra_args.extend(["--n_gpu_layers", "-1"])
+        argv = adapter.serve_argv(self.venv_python(name), model, port, extra_args)
         consent.announce(f"start {adapter.display_name}", f"{model.name} on 127.0.0.1:{port}")
         consent.log_action("start_engine", f"{name}: {model.name} on 127.0.0.1:{port}")
 

@@ -19,6 +19,7 @@ class ServerConfig:
 @dataclass
 class EngineConfig:
     name: str = "llamacpp"
+    backend: str = "vulkan"
     extra_args: list[str] = field(default_factory=list)
 
 
@@ -48,6 +49,7 @@ def load_config() -> Config:
     )
     engine = EngineConfig(
         name=str(engine_raw.get("name", EngineConfig.name)),
+        backend=str(engine_raw.get("backend", EngineConfig.backend)),
         extra_args=[str(arg) for arg in engine_raw.get("extra_args", [])],
     )
     return Config(server=server, engine=engine)

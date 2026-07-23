@@ -359,10 +359,17 @@ def setup(
         from ...engines.manager import EngineManager
 
         consent.announce(f"install engine '{engine.value}'", "isolated virtualenv + pip install")
-        EngineManager().install(
-            engine.value,
-            on_event=lambda line: console.print(line, highlight=False, markup=False),
-        )
+        manager = EngineManager()
+        try:
+            manager.install(
+                engine.value,
+                on_event=lambda line: console.print(line, highlight=False, markup=False),
+            )
+        except (RuntimeError, ValueError) as exc:
+            from .engine import _offer_backend_deps
+
+            if not _offer_backend_deps(exc, manager, engine.value):
+                raise
         consent.log_action("setup.install_engine", engine.value)
 
         if https:
