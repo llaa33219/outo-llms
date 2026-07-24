@@ -112,6 +112,27 @@ outo-llms models add tinyllama \
   --kind hf
 ```
 
+## Engine instances (custom runtimes and forks)
+
+Some models only run on forked runtimes (a patched llama.cpp, a custom vLLM). Beyond the two built-in engines, you can register **engine instances** — each with its own isolated virtualenv, state files, and port, so several runtime variants coexist and models can be pinned to the one they need.
+
+```bash
+# Register a fork (git URL, wheel URL, or local path) and install it
+outo-llms engine add llamacpp-dspark \
+  --type llamacpp \
+  --source https://github.com/example/llama-cpp-dspark.git \
+  --backend vulkan
+outo-llms engine install llamacpp-dspark
+
+# Pin a model to that instance
+outo-llms models add bonsai -k gguf -s prism-ml/Bonsai-27B-gguf --engine llamacpp-dspark
+```
+
+- Instance fields: `type` (`llamacpp` or `vllm` — serving semantics), `source` (`pypi`, git URL ending in `.git` or `git+…`, wheel/package URL, or local path), `backend` (vulkan/cuda/rocm/cpu for llamacpp types).
+- `--engine` on `models add` pins the model; unpinned models use the default engine. Each instance runs as its own process on its own port, so instances can serve different models concurrently.
+- `engine list` shows every instance with source, backend, and installed state; `engine install|use|upgrade|reset` and `engine backend` all take instance ids (`--engine` for backend). `engine remove <id>` deletes a custom instance (built-ins cannot be removed; the active instance must be switched away first).
+- Custom llamacpp sources also get `huggingface-hub` in their venv so `models add/download` keeps working.
+
 ## GPU acceleration (backends)
 
 GPU acceleration is the default. llama.cpp is built from source with one of these backends; `cpu` is the opt-out (fast prebuilt wheel, no GPU):
