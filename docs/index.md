@@ -6,7 +6,7 @@ The inference engine runs in an isolated virtual environment managed by outo-llm
 
 ## 60-second orientation
 
-1. Install the package with `pipx install outo-llms` or `pip install outo-llms`.
+1. Install the package with `uv tool install outo-llms` (or `pipx`/`pip`).
 2. Run `outo-llms setup`. Choose an engine, server address, HTTPS setting, and firewall behavior. Setup creates the data directories, database, isolated engine environment, and background server.
 3. Open the web GUI at `/` and use `Profile` > `Sign up` to create an account with a username and password. Save the `outo_st_` session token and `outo_sk_` API key when they are displayed once. API users can create an account with `POST /v1/account/signup {"username","password"}` instead.
 4. Register a model with `outo-llms models add ...`. The command downloads the weights into the shared Hugging Face cache immediately, so the first inference request does not have to.

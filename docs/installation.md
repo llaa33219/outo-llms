@@ -11,7 +11,13 @@ The package depends on Typer, Rich, FastAPI, Uvicorn, HTTPX, platformdirs, crypt
 
 ## Install the CLI
 
-`pipx` is recommended because it keeps the command-line application isolated from other Python packages while leaving outo-llms able to create its own engine environments.
+`uv tool` is recommended because it keeps the command-line application isolated from other Python packages while leaving outo-llms able to create its own engine environments.
+
+```bash
+uv tool install outo-llms
+```
+
+`pipx` works the same way:
 
 ```bash
 pipx install outo-llms
@@ -29,7 +35,7 @@ Confirm the installed version:
 outo-llms version
 ```
 
-The current package version is `0.7.5`.
+The current package version is `0.7.6`.
 
 ## Operating system notes
 

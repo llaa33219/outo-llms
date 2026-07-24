@@ -1,11 +1,11 @@
 # Quickstart
 
-This guide uses the default server-first deployment, llama.cpp, and a small GGUF model from Hugging Face. It assumes Python 3.10 or newer and a working `pipx` or `pip` installation.
+This guide uses the default server-first deployment, llama.cpp, and a small GGUF model from Hugging Face. It assumes Python 3.10 or newer and a working `uv`, `pipx`, or `pip` installation.
 
 ## 1. Install outo-llms
 
 ```bash
-pipx install outo-llms
+uv tool install outo-llms
 ```
 
 For a regular Python environment, use `python -m pip install outo-llms` instead. Check the command:

@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.7.5`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.7.6`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`

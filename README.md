@@ -59,10 +59,15 @@ Full documentation lives in [`docs/`](docs/index.md).
 ## Install
 
 ```bash
-pip install outo-llms
+uv tool install outo-llms
 ```
 
-Prefer an isolated install? `pipx install outo-llms` works too.
+Or with pip / pipx:
+
+```bash
+pip install outo-llms
+pipx install outo-llms
+```
 
 ## Quickstart
 
