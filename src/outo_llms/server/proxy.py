@@ -14,7 +14,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..engines.base import ModelRef
@@ -194,20 +194,27 @@ async def _forward(
     body = await request.json()
     if not isinstance(body, dict):
         raise openai_error(400, "request body must be a JSON object")
-    model_name, model_ref = _resolve_model(body)
-    request_id = live.begin(ctx.username, ctx.workspace_name, model_name, endpoint)
     try:
-        base_url = _ensure_base_url(model_ref)
-    except Exception:
-        live.end(request_id)
+        model_name, model_ref = _resolve_model(body)
+        request_id = live.begin(ctx.username, ctx.workspace_name, model_name, endpoint)
+        try:
+            base_url = _ensure_base_url(model_ref)
+        except Exception:
+            live.end(request_id)
+            raise
+        url = f"{base_url}/{endpoint}"
+        if body.get("stream"):
+            return await _forward_stream(url, body, ctx, model_name, request_id)
+        try:
+            return await _forward_nonstream(url, body, ctx, model_name)
+        finally:
+            live.end(request_id)
+    except HTTPException:
         raise
-    url = f"{base_url}/{endpoint}"
-    if body.get("stream"):
-        return await _forward_stream(url, body, ctx, model_name, request_id)
-    try:
-        return await _forward_nonstream(url, body, ctx, model_name)
-    finally:
-        live.end(request_id)
+    except Exception as exc:
+        raise openai_error(
+            502, f"proxy error: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 @router.post("/chat/completions", response_model=None)
