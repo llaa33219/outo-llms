@@ -128,7 +128,9 @@ outo-llms engine install llamacpp-dspark
 outo-llms models add bonsai -k gguf -s prism-ml/Bonsai-27B-gguf --engine llamacpp-dspark
 ```
 
-- Instance fields: `type` (`llamacpp` or `vllm` — serving semantics), `source` (`pypi`, git URL ending in `.git` or `git+…`, wheel/package URL, or local path), `backend` (vulkan/cuda/rocm/cpu for llamacpp types).
+- Instance fields: `type` (`llamacpp` or `vllm` — serving semantics), `source`, `backend` (vulkan/cuda/rocm/cpu for llamacpp types).
+- **Source kinds.** `pypi` installs the stock packages. A git URL (`https://github.com/org/repo`, optionally `git+…@branch`) is the fork case — and it differs by engine type: for `vllm` it is pip-installed directly (`git+…` refs supported); for `llamacpp` it is cloned and **built with cmake** (`cmake -B build -DGGML_<BACKEND>=on && cmake --build build -j`) and served with the resulting `build/bin/llama-server`, matching how llama.cpp forks are actually distributed. A local path works both ways: a checkout with `CMakeLists.txt` builds with cmake, anything else is pip-installed.
+- Source-built llama.cpp needs `git` and `cmake` on PATH (plus the backend toolchain, offered for install like other builds), keeps a minimal venv with `huggingface-hub` for model downloads, serves GPU backends with `-ngl 99`, and `engine upgrade` becomes `git pull` + recompile.
 - `--engine` on `models add` pins the model; unpinned models use the default engine. Each instance runs as its own process on its own port, so instances can serve different models concurrently.
 - `engine list` shows every instance with source, backend, and installed state; `engine install|use|upgrade|reset` and `engine backend` all take instance ids (`--engine` for backend). `engine remove <id>` deletes a custom instance (built-ins cannot be removed; the active instance must be switched away first).
 - Custom llamacpp sources also get `huggingface-hub` in their venv so `models add/download` keeps working.
