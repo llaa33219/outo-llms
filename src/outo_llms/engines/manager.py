@@ -166,6 +166,34 @@ def _base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/v1"
 
 
+def _log_error_context(path: Path) -> str:
+    """Error-relevant lines plus the tail of an engine log.
+
+    Engine failures end in a Python traceback that buries the real cause
+    (e.g. llama.cpp's own "error loading model" line); surface both.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "<log unavailable>"
+    if not lines:
+        return "<log empty>"
+    interesting = [
+        line
+        for line in lines[-200:]
+        if re.search(
+            r"error|failed|unknown|invalid|magic|architecture", line, re.IGNORECASE
+        )
+    ]
+    excerpt = interesting[-5:]
+    tail = lines[-10:]
+    parts: list[str] = []
+    if excerpt and excerpt != tail[-len(excerpt) :]:
+        parts.append("error lines:\n" + "\n".join(excerpt))
+    parts.append("last log lines:\n" + "\n".join(tail))
+    return "\n".join(parts)
+
+
 def _log_tail(path: Path, *, lines: int = 15) -> str:
     """Last ``lines`` of an engine log, for startup-failure messages."""
     try:
@@ -404,8 +432,8 @@ class EngineManager:
             returncode = proc.poll()
             if returncode is not None:
                 raise RuntimeError(
-                    f"engine '{name}' exited during startup (code {returncode}); "
-                    f"last log lines:\n{_log_tail(log_path)}"
+                    f"engine '{name}' exited during startup (code {returncode}):\n"
+                    f"{_log_error_context(log_path)}"
                 )
             try:
                 response = httpx.get(f"{base_url}/models", timeout=0.5)
@@ -470,6 +498,30 @@ class EngineManager:
         if not snapshot_dir:
             raise RuntimeError(f"could not resolve local files for {repo}")
         return ModelRef(name=model.name, source=f"{snapshot_dir}/{first}", kind=model.kind)
+
+    def upgrade(self, name: str, *, on_event: Callable[[str], None] | None = None) -> None:
+        """Upgrade the engine's packages in place (new model architectures)."""
+        adapter = get_adapter(name)
+        if not self.is_installed(name):
+            raise RuntimeError(
+                f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
+            )
+        running = self._live_pid(name)
+        if running is not None:
+            consent.announce(
+                f"stop running engine '{name}' before upgrade", f"pid {running}"
+            )
+            self.stop()
+        python = self.venv_python(name)
+        consent.announce(
+            f"upgrade {adapter.display_name} packages",
+            ", ".join(adapter.pip_requirements),
+        )
+        self._run_pip(
+            [str(python), "-m", "pip", "install", "--upgrade", *adapter.pip_requirements],
+            on_event,
+        )
+        consent.log_action("upgrade_engine", name)
 
     def reset(self) -> None:
         """Force-stop every engine and clear all runtime state files.

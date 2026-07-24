@@ -215,6 +215,24 @@ def backend(
         )
 
 
+@engine_app.command("upgrade")
+def upgrade(
+    name: str | None = typer.Argument(None, help="Engine to upgrade (default: the active engine)."),
+) -> None:
+    """Upgrade the engine's packages in place (e.g. newer model architectures)."""
+    manager = _manager()
+    target = name if name is not None else manager.current_name()
+    try:
+        manager.upgrade(
+            target,
+            on_event=lambda line: console.print(line, highlight=False, markup=False),
+        )
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"[bold red]error:[/] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]engine '{target}' upgraded.[/]")
+
+
 @engine_app.command("reset")
 def reset() -> None:
     """Force-stop engines and clear runtime state (registry/weights kept)."""
