@@ -52,6 +52,7 @@ def model_detail(name: str, ctx: SessionOrWorkspaceDep) -> dict[str, object]:
                 "name": row["name"],
                 "source": row["source"],
                 "kind": row["kind"],
+                "engine": row["engine"],
                 "created_at": row["created_at"],
             }
     raise openai_error(

@@ -160,6 +160,12 @@ def add(
         "--hf",
         help="Hugging Face repo id to install (sets source and kind=hf).",
     ),
+    engine: str | None = typer.Option(
+        None,
+        "--engine",
+        "-e",
+        help="Engine instance that serves this model (default: the active engine).",
+    ),
     no_download: bool = typer.Option(
         False,
         "--no-download",
@@ -186,16 +192,25 @@ def add(
             resolved_kind = "hf"
 
     db.init_db()
+    if engine is not None:
+        from ...core import config as config_mod
+
+        try:
+            config_mod.resolve_instance(config_mod.load_config(), engine)
+        except ValueError as exc:
+            console.print(f"[bold red]error:[/] {exc}")
+            raise typer.Exit(1) from exc
     try:
-        registry.add_model(name, resolved_source, resolved_kind)
+        registry.add_model(name, resolved_source, resolved_kind, engine=engine)
     except ValueError as exc:
         console.print(f"[bold red]error:[/] {exc}")
         raise typer.Exit(1) from exc
 
+    engine_note = f" engine={engine}" if engine else ""
     if no_download:
         console.print(
             f"[green]model '{name}' registered (download skipped)[/] "
-            f"({resolved_kind}: {resolved_source})"
+            f"({resolved_kind}: {resolved_source}{engine_note})"
         )
         return
     if _download_weights(name):
@@ -204,7 +219,7 @@ def add(
         )
     else:
         console.print(
-            f"[green]model '{name}' registered[/] ({resolved_kind}: {resolved_source})"
+            f"[green]model '{name}' registered[/] ({resolved_kind}: {resolved_source}{engine_note})"
         )
 
 

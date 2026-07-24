@@ -24,6 +24,7 @@ class ModelRef:
     name: str  # registry name used by clients, e.g. "tinyllama"
     source: str  # HF repo id, or a path to a local .gguf file
     kind: str  # "hf" | "gguf"
+    engine: str | None = None  # engine instance pinned to this model (None = default)
 
 
 class EngineAdapter(ABC):

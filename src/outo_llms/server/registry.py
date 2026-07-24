@@ -10,7 +10,7 @@ from . import db
 _KINDS = ("hf", "gguf")
 
 
-def add_model(name: str, source: str, kind: str) -> None:
+def add_model(name: str, source: str, kind: str, engine: str | None = None) -> None:
     """Register a model. ``kind`` must be ``hf`` or ``gguf``; names are unique."""
     db.init_db()
     if kind not in _KINDS:
@@ -18,8 +18,9 @@ def add_model(name: str, source: str, kind: str) -> None:
     with db.get_conn() as conn:
         try:
             conn.execute(
-                "INSERT INTO models (name, source, kind, created_at) VALUES (?, ?, ?, ?)",
-                (name, source, kind, db.utcnow()),
+                "INSERT INTO models (name, source, kind, engine, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (name, source, kind, engine, db.utcnow()),
             )
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"model {name!r} is already registered") from exc
@@ -30,12 +31,14 @@ def get_model(name: str) -> ModelRef | None:
     db.init_db()
     with db.get_conn() as conn:
         row = conn.execute(
-            "SELECT name, source, kind FROM models WHERE name = ?",
+            "SELECT name, source, kind, engine FROM models WHERE name = ?",
             (name,),
         ).fetchone()
     if row is None:
         return None
-    return ModelRef(name=row["name"], source=row["source"], kind=row["kind"])
+    return ModelRef(
+        name=row["name"], source=row["source"], kind=row["kind"], engine=row["engine"]
+    )
 
 
 def list_models() -> list[dict[str, object]]:
@@ -43,13 +46,14 @@ def list_models() -> list[dict[str, object]]:
     db.init_db()
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT name, source, kind, created_at FROM models ORDER BY id"
+            "SELECT name, source, kind, engine, created_at FROM models ORDER BY id"
         ).fetchall()
     return [
         {
             "name": row["name"],
             "source": row["source"],
             "kind": row["kind"],
+            "engine": row["engine"],
             "created_at": row["created_at"],
         }
         for row in rows

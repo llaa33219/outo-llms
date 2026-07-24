@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -35,20 +36,122 @@ def _manager() -> EngineManager:
     return EngineManager()
 
 
+_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+@engine_app.command("add")
+def add_engine(
+    engine_id: str = typer.Argument(..., help="Name for the new engine instance."),
+    type: str = typer.Option(
+        ..., "--type", "-t", help="Runtime family: 'llamacpp' or 'vllm'."
+    ),
+    source: str = typer.Option(
+        "pypi",
+        "--source",
+        "-s",
+        help="Package source: 'pypi', a git URL (…git), a wheel URL, or a local path.",
+    ),
+    backend: BackendChoice = typer.Option(
+        BackendChoice.vulkan, "--backend", "-b", help="GPU backend (llamacpp only)."
+    ),
+) -> None:
+    """Register a custom engine instance (e.g. a forked runtime)."""
+    from ...core import config as config_mod
+    from ...engines.base import get_adapter
+
+    if not _ID_RE.match(engine_id):
+        console.print(
+            "[bold red]error:[/] engine id must be lowercase letters, digits, '-' or '_'."
+        )
+        raise typer.Exit(1)
+    try:
+        get_adapter(type)
+    except ValueError as exc:
+        console.print(f"[bold red]error:[/] {exc}")
+        raise typer.Exit(1) from exc
+    cfg = config_mod.load_config()
+    if engine_id in cfg.engine.engines:
+        console.print(f"[bold red]error:[/] engine '{engine_id}' already exists.")
+        raise typer.Exit(1)
+    cfg.engine.engines[engine_id] = config_mod.EngineInstance(
+        type=type, source=source, backend=backend.value
+    )
+    config_mod.save_config(cfg)
+    consent.log_action("add_engine", f"{engine_id} type={type} source={source}")
+    console.print(
+        f"[green]engine '{engine_id}' added[/] (type={type}, source={source}, "
+        f"backend={backend.value}). Install it with `outo-llms engine install {engine_id}`."
+    )
+
+
+@engine_app.command("remove")
+def remove_engine(
+    engine_id: str = typer.Argument(..., help="Custom engine instance to remove."),
+) -> None:
+    """Remove a custom engine instance (venv, state files, and registry entry)."""
+    from ...core import config as config_mod
+
+    cfg = config_mod.load_config()
+    if engine_id not in cfg.engine.engines:
+        console.print(
+            f"[bold red]error:[/] '{engine_id}' is not a custom engine instance "
+            "(built-ins llamacpp/vllm cannot be removed)."
+        )
+        raise typer.Exit(1)
+    if cfg.engine.name == engine_id:
+        console.print(
+            f"[bold red]error:[/] '{engine_id}' is the active engine; "
+            "switch with `outo-llms engine use` first."
+        )
+        raise typer.Exit(1)
+    if not consent.confirm(
+        f"Remove engine '{engine_id}' (its venv and runtime state)?", default=False
+    ):
+        console.print("aborted - nothing was changed.")
+        return
+    manager = _manager()
+    manager.stop(engine_id)
+    import shutil
+
+    from ...core import paths
+
+    engine_dir = paths.engines_dir() / engine_id
+    if engine_dir.is_dir():
+        consent.announce("remove engine virtualenv", str(engine_dir))
+        shutil.rmtree(engine_dir, ignore_errors=True)
+    del cfg.engine.engines[engine_id]
+    config_mod.save_config(cfg)
+    consent.log_action("remove_engine", engine_id)
+    console.print(f"[green]engine '{engine_id}' removed.[/]")
+
+
 @engine_app.command("list")
 def list_engines() -> None:
-    """List known engines, their installed state, and the active one."""
+    """List engine instances, their source, backend, and installed state."""
+    from ...core import config as config_mod
+
     manager = _manager()
+    cfg = config_mod.load_config()
     active = manager.current_name()
     table = Table(title="Engines")
-    table.add_column("Engine")
+    table.add_column("Instance")
+    table.add_column("Type")
+    table.add_column("Source")
+    table.add_column("Backend")
     table.add_column("Installed")
     table.add_column("Active")
     for name in manager.available():
+        instance = config_mod.resolve_instance(cfg, name)
         table.add_row(
-            name,
+            name, instance.type, instance.source, instance.backend,
             "yes" if manager.is_installed(name) else "no",
             "yes" if name == active else "",
+        )
+    for instance_id, instance in cfg.engine.engines.items():
+        table.add_row(
+            instance_id, instance.type, instance.source, instance.backend,
+            "yes" if manager.is_installed(instance_id) else "no",
+            "yes" if instance_id == active else "",
         )
     console.print(table)
 
@@ -189,30 +292,36 @@ def backend(
     choice: BackendChoice = typer.Argument(
         ..., help="GPU backend for llama.cpp: vulkan (default), cuda, rocm, or cpu."
     ),
+    engine_id: str | None = typer.Option(
+        None, "--engine", "-e", help="Instance to change (default: the active engine)."
+    ),
 ) -> None:
-    """Select the GPU backend; re-run `engine install llamacpp` to rebuild."""
+    """Select the GPU backend; re-run `engine install <id>` to rebuild."""
     from ...core import config as config_mod
 
     manager = _manager()
     cfg = config_mod.load_config()
-    if cfg.engine.backend == choice.value:
-        console.print(f"[green]backend is already '{choice.value}'.[/]")
-        return
-    cfg.engine.backend = choice.value
-    config_mod.save_config(cfg)
-    consent.log_action("engine_backend", choice.value)
-    manager.stop()
-    console.print(f"[green]backend set to '{choice.value}'.[/]")
-    if choice.value != "cpu":
-        console.print(
-            "re-run `outo-llms engine install llamacpp` to rebuild with "
-            f"{choice.value.upper()} support (compiles from source)."
-        )
+    target = engine_id if engine_id is not None else manager.current_name()
+    if target in cfg.engine.engines:
+        if cfg.engine.engines[target].backend == choice.value:
+            console.print(f"[green]backend of '{target}' is already '{choice.value}'.[/]")
+            return
+        cfg.engine.engines[target].backend = choice.value
     else:
-        console.print(
-            "re-run `outo-llms engine install llamacpp` to switch back to the "
-            "fast prebuilt CPU wheel."
-        )
+        if target not in manager.available():
+            console.print(f"[bold red]error:[/] unknown engine instance '{target}'.")
+            raise typer.Exit(1)
+        if cfg.engine.backend == choice.value:
+            console.print(f"[green]backend is already '{choice.value}'.[/]")
+            return
+        cfg.engine.backend = choice.value
+    config_mod.save_config(cfg)
+    consent.log_action("engine_backend", f"{target}={choice.value}")
+    manager.stop(target)
+    console.print(f"[green]backend of '{target}' set to '{choice.value}'.[/]")
+    console.print(
+        f"re-run `outo-llms engine install {target}` to rebuild with the new backend."
+    )
 
 
 @engine_app.command("upgrade")

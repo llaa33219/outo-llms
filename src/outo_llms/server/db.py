@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS models (
     name TEXT UNIQUE NOT NULL,
     source TEXT NOT NULL,
     kind TEXT NOT NULL,
+    engine TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS usage (
@@ -82,6 +83,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
     if "password_hash" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+    model_columns = {row["name"] for row in conn.execute("PRAGMA table_info(models)")}
+    if "engine" not in model_columns:
+        conn.execute("ALTER TABLE models ADD COLUMN engine TEXT")
 
 
 def init_db() -> None:

@@ -17,10 +17,39 @@ class ServerConfig:
 
 
 @dataclass
+class EngineInstance:
+    """One engine installation: adapter type + package source + GPU backend."""
+
+    type: str
+    source: str = "pypi"
+    backend: str = "vulkan"
+
+
+@dataclass
 class EngineConfig:
     name: str = "llamacpp"
     backend: str = "vulkan"
     extra_args: list[str] = field(default_factory=list)
+    engines: dict[str, EngineInstance] = field(default_factory=dict)
+
+
+_BUILTIN_INSTANCES: dict[str, EngineInstance] = {
+    "llamacpp": EngineInstance(type="llamacpp", source="pypi"),
+    "vllm": EngineInstance(type="vllm", source="pypi"),
+}
+
+
+def resolve_instance(cfg: "Config", name: str) -> EngineInstance:
+    """Instance for ``name``: custom registry first, built-ins implicit."""
+    custom = cfg.engine.engines.get(name)
+    if custom is not None:
+        return custom
+    builtin = _BUILTIN_INSTANCES.get(name)
+    if builtin is not None:
+        return EngineInstance(
+            type=builtin.type, source=builtin.source, backend=cfg.engine.backend
+        )
+    raise ValueError(f"unknown engine instance: {name!r}")
 
 
 @dataclass
@@ -51,6 +80,14 @@ def load_config() -> Config:
         name=str(engine_raw.get("name", EngineConfig.name)),
         backend=str(engine_raw.get("backend", EngineConfig.backend)),
         extra_args=[str(arg) for arg in engine_raw.get("extra_args", [])],
+        engines={
+            str(instance_name): EngineInstance(
+                type=str(instance_raw.get("type", "llamacpp")),
+                source=str(instance_raw.get("source", "pypi")),
+                backend=str(instance_raw.get("backend", EngineConfig.backend)),
+            )
+            for instance_name, instance_raw in engine_raw.get("engines", {}).items()
+        },
     )
     return Config(server=server, engine=engine)
 

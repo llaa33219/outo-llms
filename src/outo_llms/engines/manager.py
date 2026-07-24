@@ -166,6 +166,22 @@ def _base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/v1"
 
 
+def _pip_source(source: str) -> str:
+    """Normalize a custom engine package source into a pip install argument."""
+    if source.startswith("git+"):
+        return source
+    if "://" in source:
+        if source.endswith(".git"):
+            return f"git+{source}"
+        return source
+    if Path(source).exists():
+        return str(Path(source).resolve())
+    raise ValueError(
+        f"unrecognized engine source {source!r}; use a git URL (…git), "
+        "a package/wheel URL, or an existing local path"
+    )
+
+
 def _log_error_context(path: Path) -> str:
     """Error-relevant lines plus the tail of an engine log.
 
@@ -228,6 +244,14 @@ class EngineManager:
         """Engine name from the config (defaults to ``llamacpp``)."""
         return config_mod.load_config().engine.name
 
+    def _instance(self, name: str) -> config_mod.EngineInstance:
+        """Resolve an engine instance id to its type/source/backend."""
+        return config_mod.resolve_instance(config_mod.load_config(), name)
+
+    def _engine_for(self, model: ModelRef) -> str:
+        """The instance serving ``model``: its pin, or the default engine."""
+        return model.engine if model.engine else self.current_name()
+
     def is_installed(self, name: str | None = None) -> bool:
         """True when the marker file and the venv python both exist."""
         engine = self.current_name() if name is None else name
@@ -283,15 +307,27 @@ class EngineManager:
 
     # -- install / select ------------------------------------------------
 
+    def _instance_requirements(
+        self, instance: config_mod.EngineInstance, adapter: EngineAdapter
+    ) -> list[str]:
+        """Pip arguments that install an engine instance's runtime package."""
+        if instance.source == "pypi":
+            return list(adapter.pip_requirements)
+        requirement = _pip_source(instance.source)
+        if instance.type == "llamacpp":
+            return [requirement, "huggingface-hub>=0.24"]
+        return [requirement]
+
     def install(
         self, name: str, *, on_event: Callable[[str], None] | None = None
     ) -> None:
-        """Create the engine venv and pip-install the adapter requirements.
+        """Create the engine venv and pip-install the instance's runtime.
 
         Every pip line is forwarded to ``on_event`` (when given). Raises
         ValueError for unknown engines and RuntimeError when pip fails.
         """
-        adapter = get_adapter(name)
+        instance = self._instance(name)
+        adapter = get_adapter(instance.type)
         running = self._live_pid(name)
         if running is not None:
             consent.announce(
@@ -304,9 +340,8 @@ class EngineManager:
         engine_dir.mkdir(parents=True, exist_ok=True)
 
         env: dict[str, str] | None = None
-        backend = config_mod.load_config().engine.backend
-        if name == "llamacpp" and backend != "cpu":
-            env = self._backend_env(name, adapter)
+        if instance.type == "llamacpp" and instance.backend != "cpu":
+            env = self._backend_env(name, adapter, instance.backend)
 
         consent.announce(f"create virtualenv for {adapter.display_name}", str(venv_dir))
         subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
@@ -315,13 +350,15 @@ class EngineManager:
         consent.announce("upgrade pip in the engine virtualenv", name)
         self._run_pip([str(python), "-m", "pip", "install", "--upgrade", "pip"], on_event)
 
-        requirements = ", ".join(adapter.pip_requirements)
-        consent.announce(f"install {adapter.display_name} into the venv", requirements)
+        requirements = self._instance_requirements(instance, adapter)
+        consent.announce(
+            f"install {adapter.display_name} into the venv", ", ".join(requirements)
+        )
         pip_args = [str(python), "-m", "pip", "install"]
         if env is not None:
             pip_args += ["--force-reinstall", "--no-cache-dir"]
         self._run_streaming(
-            [*pip_args, *adapter.pip_requirements],
+            [*pip_args, *requirements],
             on_event,
             env=env,
             label="pip install",
@@ -333,7 +370,7 @@ class EngineManager:
 
     def use(self, name: str) -> None:
         """Select ``name`` as the current engine (must be installed)."""
-        get_adapter(name)
+        self._instance(name)
         if not self.is_installed(name):
             raise RuntimeError(
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
@@ -343,9 +380,10 @@ class EngineManager:
         config_mod.save_config(cfg)
         consent.log_action("use_engine", name)
 
-    def _backend_env(self, name: str, adapter: EngineAdapter) -> dict[str, str]:
+    def _backend_env(
+        self, name: str, adapter: EngineAdapter, backend: str
+    ) -> dict[str, str]:
         """Build env for a GPU-enabled source build; check the toolchain."""
-        backend = config_mod.load_config().engine.backend
         spec = _BACKEND_BUILD.get(backend)
         if spec is None:
             raise RuntimeError(
@@ -380,8 +418,9 @@ class EngineManager:
         recorded. Raises RuntimeError/ValueError on setup mismatches and
         RuntimeError when the engine fails to become ready.
         """
-        name = self.current_name()
-        adapter = get_adapter(name)
+        name = self._engine_for(model)
+        instance = self._instance(name)
+        adapter = get_adapter(instance.type)
         if not self.is_installed(name):
             raise RuntimeError(
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
@@ -405,8 +444,8 @@ class EngineManager:
         paths.ensure_dirs()
         extra_args = list(cfg.engine.extra_args)
         if (
-            name == "llamacpp"
-            and cfg.engine.backend != "cpu"
+            instance.type == "llamacpp"
+            and instance.backend != "cpu"
             and not any(arg.startswith("--n_gpu_layers") for arg in extra_args)
         ):
             extra_args.extend(["--n_gpu_layers", "-1"])
@@ -529,7 +568,9 @@ class EngineManager:
         The model registry and downloaded weights are untouched; the next
         request starts a completely fresh engine process.
         """
-        for name in self.available():
+        cfg = config_mod.load_config()
+        names = list(dict.fromkeys([*self.available(), *cfg.engine.engines.keys()]))
+        for name in names:
             pid = self._live_pid(name)
             if pid is not None:
                 consent.announce(f"stop engine '{name}'", f"pid {pid}")
@@ -539,9 +580,9 @@ class EngineManager:
             self._model_path(name).unlink(missing_ok=True)
         consent.log_action("reset_engine", "all engines stopped, state cleared")
 
-    def stop(self) -> None:
-        """Stop the current engine (if running) and clear its state files."""
-        name = self.current_name()
+    def stop(self, name: str | None = None) -> None:
+        """Stop an engine (if running) and clear its state files."""
+        name = self.current_name() if name is None else name
         pid = process.read_pid(self._pid_path(name))
         if pid is not None and process.pid_alive(pid):
             consent.announce(f"stop engine '{name}'", f"pid {pid}")
@@ -576,8 +617,8 @@ class EngineManager:
         Returns the resolved target: ``repo:file`` when a GGUF file was
         selected, otherwise the source unchanged.
         """
-        name = self.current_name()
-        adapter = get_adapter(name)
+        name = self._engine_for(model)
+        adapter = get_adapter(self._instance(name).type)
         if not self.is_installed(name):
             raise EngineNotInstalledError(
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
