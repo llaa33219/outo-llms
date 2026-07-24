@@ -37,16 +37,27 @@ class EngineAdapter(ABC):
 
     @abstractmethod
     def serve_argv(
-        self, python: Path, model: ModelRef, port: int, extra_args: list[str]
+        self,
+        python: Path,
+        model: ModelRef,
+        port: int,
+        extra_args: list[str],
+        *,
+        engine_dir: Path | None = None,
     ) -> list[str]:
         """Argv that starts an OpenAI-compatible server for ``model``.
 
-        ``python`` is the engine venv's interpreter. The server must bind
-        127.0.0.1 (engines are never exposed directly)."""
+        ``python`` is the engine venv's interpreter. ``engine_dir`` is the
+        instance's directory (needed by source-built engines). The server
+        must bind 127.0.0.1 (engines are never exposed directly)."""
 
     @abstractmethod
     def supports(self, model: ModelRef) -> bool:
         """Whether this engine can serve the given model."""
+
+    def gpu_args(self, backend: str) -> list[str]:
+        """GPU offload flags for the serve argv; empty by default."""
+        return []
 
 
 def adapter_names() -> list[str]:

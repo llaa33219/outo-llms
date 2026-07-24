@@ -32,6 +32,7 @@ import httpx
 from ..core import config as config_mod
 from ..core import consent, paths, process
 from .base import EngineAdapter, ModelRef, adapter_names, get_adapter
+from .llamacpp import LlamaCppAdapter
 
 _PIP_TAIL_LINES = 20
 
@@ -166,20 +167,42 @@ def _base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/v1"
 
 
+_ARCHIVE_SUFFIXES = (".whl", ".tar.gz", ".tgz", ".zip", ".tar.bz2")
+
+
 def _pip_source(source: str) -> str:
     """Normalize a custom engine package source into a pip install argument."""
     if source.startswith("git+"):
         return source
     if "://" in source:
-        if source.endswith(".git"):
-            return f"git+{source}"
-        return source
+        if source.endswith(_ARCHIVE_SUFFIXES):
+            return source
+        return f"git+{source}"
     if Path(source).exists():
         return str(Path(source).resolve())
     raise ValueError(
-        f"unrecognized engine source {source!r}; use a git URL (…git), "
+        f"unrecognized engine source {source!r}; use a git URL, "
         "a package/wheel URL, or an existing local path"
     )
+
+
+def _is_cmake_source(source: str) -> bool:
+    """Whether the source is a llama.cpp fork to build with cmake."""
+    if source.startswith("git+"):
+        return True
+    if "://" in source:
+        return not source.endswith(_ARCHIVE_SUFFIXES)
+    path = Path(source)
+    return path.is_dir() and (path / "CMakeLists.txt").is_file()
+
+
+def _cmake_git(source: str) -> tuple[str, str | None]:
+    """Split a git source into (url, ref); ref comes from a trailing @ref."""
+    url = source.removeprefix("git+")
+    if "@" in url.rsplit("/", 1)[-1]:
+        url, _, ref = url.rpartition("@")
+        return url, ref or None
+    return url, None
 
 
 def _log_error_context(path: Path) -> str:
@@ -248,6 +271,15 @@ class EngineManager:
         """Resolve an engine instance id to its type/source/backend."""
         return config_mod.resolve_instance(config_mod.load_config(), name)
 
+    def _adapter_for(self, name: str) -> EngineAdapter:
+        """Adapter for an instance, in binary mode for llama.cpp forks."""
+        from .llamacpp import LlamaCppAdapter
+
+        instance = self._instance(name)
+        if instance.type == "llamacpp" and _is_cmake_source(instance.source):
+            return LlamaCppAdapter(binary=True)
+        return get_adapter(instance.type)
+
     def _engine_for(self, model: ModelRef) -> str:
         """The instance serving ``model``: its pin, or the default engine."""
         return model.engine if model.engine else self.current_name()
@@ -313,6 +345,8 @@ class EngineManager:
         """Pip arguments that install an engine instance's runtime package."""
         if instance.source == "pypi":
             return list(adapter.pip_requirements)
+        if instance.type == "llamacpp" and _is_cmake_source(instance.source):
+            return ["huggingface-hub>=0.24"]
         requirement = _pip_source(instance.source)
         if instance.type == "llamacpp":
             return [requirement, "huggingface-hub>=0.24"]
@@ -321,13 +355,13 @@ class EngineManager:
     def install(
         self, name: str, *, on_event: Callable[[str], None] | None = None
     ) -> None:
-        """Create the engine venv and pip-install the instance's runtime.
+        """Create the engine venv and install the instance's runtime.
 
-        Every pip line is forwarded to ``on_event`` (when given). Raises
-        ValueError for unknown engines and RuntimeError when pip fails.
+        Every output line is forwarded to ``on_event`` (when given). Raises
+        ValueError for unknown engines and RuntimeError when a step fails.
         """
+        adapter = self._adapter_for(name)
         instance = self._instance(name)
-        adapter = get_adapter(instance.type)
         running = self._live_pid(name)
         if running is not None:
             consent.announce(
@@ -340,8 +374,12 @@ class EngineManager:
         engine_dir.mkdir(parents=True, exist_ok=True)
 
         env: dict[str, str] | None = None
+        is_cmake = isinstance(adapter, LlamaCppAdapter) and adapter.binary
         if instance.type == "llamacpp" and instance.backend != "cpu":
-            env = self._backend_env(name, adapter, instance.backend)
+            if is_cmake:
+                env = self._backend_toolchain_env(instance.backend)
+            else:
+                env = self._backend_env(name, adapter, instance.backend)
 
         consent.announce(f"create virtualenv for {adapter.display_name}", str(venv_dir))
         subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
@@ -355,7 +393,7 @@ class EngineManager:
             f"install {adapter.display_name} into the venv", ", ".join(requirements)
         )
         pip_args = [str(python), "-m", "pip", "install"]
-        if env is not None:
+        if env is not None and not is_cmake:
             pip_args += ["--force-reinstall", "--no-cache-dir"]
         self._run_streaming(
             [*pip_args, *requirements],
@@ -363,10 +401,68 @@ class EngineManager:
             env=env,
             label="pip install",
         )
+        if is_cmake:
+            self._build_llamacpp(name, instance, env, on_event)
 
         timestamp = dt.datetime.now().isoformat(timespec="seconds")
         self._marker(name).write_text(f"{timestamp}\n", encoding="utf-8")
         consent.log_action("install_engine", name)
+
+    def _build_llamacpp(
+        self,
+        name: str,
+        instance: config_mod.EngineInstance,
+        env: dict[str, str] | None,
+        on_event: Callable[[str], None] | None,
+    ) -> None:
+        """Clone (or reuse) a llama.cpp checkout and build it with cmake."""
+        for tool in ("git", "cmake"):
+            if shutil.which(tool) is None:
+                raise RuntimeError(
+                    f"building llama.cpp from source needs '{tool}' on PATH "
+                    f"(e.g. sudo apt-get install -y {tool})"
+                )
+        engine_dir = self._engine_dir(name)
+        src_dir = engine_dir / "src"
+        source = instance.source
+        if "://" in source or source.startswith("git+"):
+            url, ref = _cmake_git(source)
+            if not src_dir.is_dir():
+                argv = ["git", "clone"]
+                if ref:
+                    argv += ["--branch", ref]
+                argv += [url, str(src_dir)]
+                consent.announce("clone llama.cpp fork", f"{url} -> {src_dir}")
+                self._run_streaming(argv, on_event, label="git clone")
+        else:
+            src_dir = Path(source)
+            consent.announce("use local llama.cpp checkout", str(src_dir))
+
+        cmake_flags: list[str] = []
+        if instance.backend != "cpu":
+            spec = _BACKEND_BUILD.get(instance.backend)
+            if spec is None:
+                raise RuntimeError(f"unknown backend {instance.backend!r}")
+            cmake_flags.append(f"-D{spec['cmake']}=on")
+        consent.announce(
+            "configure llama.cpp build", "cmake -B build " + " ".join(cmake_flags)
+        )
+        self._run_streaming(
+            ["cmake", "-B", "build", *cmake_flags],
+            on_event,
+            env=env,
+            label="cmake configure",
+            cwd=src_dir,
+        )
+        consent.announce("compile llama.cpp", "cmake --build build -j")
+        self._run_streaming(
+            ["cmake", "--build", "build", "-j"],
+            on_event,
+            env=env,
+            label="cmake build",
+            cwd=src_dir,
+        )
+        consent.log_action("build_llamacpp", f"{name}: {source}")
 
     def use(self, name: str) -> None:
         """Select ``name`` as the current engine (must be installed)."""
@@ -380,10 +476,8 @@ class EngineManager:
         config_mod.save_config(cfg)
         consent.log_action("use_engine", name)
 
-    def _backend_env(
-        self, name: str, adapter: EngineAdapter, backend: str
-    ) -> dict[str, str]:
-        """Build env for a GPU-enabled source build; check the toolchain."""
+    def _backend_toolchain_env(self, backend: str) -> dict[str, str]:
+        """Check the backend toolchain and return a PATH-augmented env."""
         spec = _BACKEND_BUILD.get(backend)
         if spec is None:
             raise RuntimeError(
@@ -398,15 +492,24 @@ class EngineManager:
                     break
             if tool_dir is None:
                 raise BackendDepsError(backend, tool)
+        env = os.environ.copy()
+        if tool_dir is not None:
+            env["PATH"] = f"{tool_dir}:{env.get('PATH', '')}"
+        return env
+
+    def _backend_env(
+        self, name: str, adapter: EngineAdapter, backend: str
+    ) -> dict[str, str]:
+        """Build env for a pip source build with GPU support."""
+        env = self._backend_toolchain_env(backend)
         consent.announce(
             f"build {adapter.display_name} with {backend.upper()} support",
             "compiles from source - this can take several minutes",
         )
-        env = os.environ.copy()
+        spec = _BACKEND_BUILD.get(backend)
+        assert spec is not None
         env["CMAKE_ARGS"] = f"-D{spec['cmake']}=on"
         env["FORCE_CMAKE"] = "1"
-        if tool_dir is not None:
-            env["PATH"] = f"{tool_dir}:{env.get('PATH', '')}"
         return env
 
     # -- run / stop ------------------------------------------------------
@@ -420,7 +523,7 @@ class EngineManager:
         """
         name = self._engine_for(model)
         instance = self._instance(name)
-        adapter = get_adapter(instance.type)
+        adapter = self._adapter_for(name)
         if not self.is_installed(name):
             raise RuntimeError(
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
@@ -443,13 +546,11 @@ class EngineManager:
         log_path = paths.logs_dir() / f"engine-{name}.log"
         paths.ensure_dirs()
         extra_args = list(cfg.engine.extra_args)
-        if (
-            instance.type == "llamacpp"
-            and instance.backend != "cpu"
-            and not any(arg.startswith("--n_gpu_layers") for arg in extra_args)
-        ):
-            extra_args.extend(["--n_gpu_layers", "-1"])
-        argv = adapter.serve_argv(self.venv_python(name), model, port, extra_args)
+        if not any(arg.startswith("--n_gpu_layers") for arg in extra_args):
+            extra_args.extend(adapter.gpu_args(instance.backend))
+        argv = adapter.serve_argv(
+            self.venv_python(name), model, port, extra_args, engine_dir=self._engine_dir(name)
+        )
         consent.announce(f"start {adapter.display_name}", f"{model.name} on 127.0.0.1:{port}")
         consent.log_action("start_engine", f"{name}: {model.name} on 127.0.0.1:{port}")
 
@@ -539,8 +640,9 @@ class EngineManager:
         return ModelRef(name=model.name, source=f"{snapshot_dir}/{first}", kind=model.kind)
 
     def upgrade(self, name: str, *, on_event: Callable[[str], None] | None = None) -> None:
-        """Upgrade the engine's packages in place (new model architectures)."""
-        adapter = get_adapter(name)
+        """Upgrade the engine's runtime in place (new model architectures)."""
+        instance = self._instance(name)
+        adapter = self._adapter_for(name)
         if not self.is_installed(name):
             raise RuntimeError(
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
@@ -551,6 +653,30 @@ class EngineManager:
                 f"stop running engine '{name}' before upgrade", f"pid {running}"
             )
             self.stop()
+        if isinstance(adapter, LlamaCppAdapter) and adapter.binary:
+            src_dir = self._engine_dir(name) / "src"
+            if not (src_dir / ".git").is_dir():
+                raise RuntimeError(
+                    f"engine '{name}' was built from a local checkout; "
+                    "rebuild with `outo-llms engine install` after updating it yourself"
+                )
+            consent.announce("update llama.cpp fork", f"git -C {src_dir} pull")
+            self._run_streaming(
+                ["git", "-C", str(src_dir), "pull"], on_event, label="git pull"
+            )
+            consent.announce("recompile llama.cpp", "cmake --build build -j")
+            env: dict[str, str] | None = None
+            if instance.backend != "cpu":
+                env = self._backend_toolchain_env(instance.backend)
+            self._run_streaming(
+                ["cmake", "--build", "build", "-j"],
+                on_event,
+                env=env,
+                label="cmake build",
+                cwd=src_dir,
+            )
+            consent.log_action("upgrade_engine", f"{name} (source rebuild)")
+            return
         python = self.venv_python(name)
         consent.announce(
             f"upgrade {adapter.display_name} packages",
@@ -618,7 +744,7 @@ class EngineManager:
         selected, otherwise the source unchanged.
         """
         name = self._engine_for(model)
-        adapter = get_adapter(self._instance(name).type)
+        adapter = self._adapter_for(name)
         if not self.is_installed(name):
             raise EngineNotInstalledError(
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
@@ -795,6 +921,7 @@ class EngineManager:
         *,
         env: dict[str, str] | None = None,
         label: str,
+        cwd: Path | None = None,
     ) -> list[str]:
         """Run ``argv``, forwarding each output line to ``on_event``.
 
@@ -809,6 +936,7 @@ class EngineManager:
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             env=env,
+            cwd=cwd,
         ) as proc:
             assert proc.stdout is not None  # guaranteed by stdout=PIPE
             buffer = b""
