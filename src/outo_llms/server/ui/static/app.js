@@ -5,12 +5,14 @@
   const LEGACY_STORAGE_KEY = "outo_llms_api_key";
   const INFERENCE_KEYS_STORAGE_KEY = "outo_llms_keys";
   const SIGN_IN_MIGRATION_NOTICE = "Sign-in changed: please log in with your username and password (API keys are now only for inference).";
+  const BLP_ANIM_DURATION = 100;
+  const BLP_STAGGER_STEP = 40;
   const migratedLegacyKey = removeLegacyApiKey();
   const elements = {
-    appShell: document.getElementById("app-shell"),
+    tilingSpace: document.getElementById("tiling-space"),
     modalRoot: document.getElementById("modal-root"),
     nav: document.getElementById("main-nav"),
-    noticeRegion: document.getElementById("notice-region"),
+    toastStack: document.getElementById("toast-stack"),
     profileMenu: document.getElementById("profile-menu"),
     profileTrigger: document.getElementById("profile-trigger"),
     viewRoot: document.getElementById("view-root"),
@@ -34,7 +36,8 @@
     sessionToken: readStoredSession(),
     cachedInferenceKeys: readStoredInferenceKeys(),
     authNotice: "",
-    notice: null,
+    notices: [],
+    nextNoticeId: 1,
     userStatus: "idle",
     user: null,
     userError: null,
@@ -67,9 +70,18 @@
     busyAction: "",
     profileOpen: false,
     modal: null,
-    noticeTimer: 0,
+    noticeTimers: {},
     liveTimer: 0,
   };
+
+  // Element-level identity tracking for Animation classes.
+  // These maps live across renders so we can decide which classes
+  // to apply (Enter on first mount, Exit on close) without
+  // re-triggering animations on every render.
+  const toastElements = new Map(); // id -> { element, isNew, isExiting }
+  const profileMenuRendered = { open: false, hasContent: false, element: null };
+  const modalRendered = { kind: null, secret: null, element: null };
+  let firstMountHandled = false;
 
   class ApiError extends Error {
     constructor(message, status = 0, network = false) {
@@ -347,19 +359,49 @@
     state.keyFormError = null;
     state.passwordFormError = null;
     state.busyAction = "";
-    state.modal = null;
     state.profileOpen = true;
     render();
   }
 
   function showNotice(message, tone = "info") {
-    state.notice = { message, tone };
-    window.clearTimeout(state.noticeTimer);
-    state.noticeTimer = window.setTimeout(() => {
-      state.notice = null;
-      render();
+    const id = state.nextNoticeId;
+    state.nextNoticeId += 1;
+    state.notices.push({ id, message, tone });
+    renderToasts();
+    if (state.noticeTimers[id]) {
+      window.clearTimeout(state.noticeTimers[id]);
+    }
+    state.noticeTimers[id] = window.setTimeout(() => {
+      removeNotice(id);
     }, 4500);
-    render();
+  }
+
+  function removeNotice(id) {
+    const entry = toastElements.get(id);
+    if (!entry) {
+      // Already gone.
+      state.notices = state.notices.filter((notice) => notice.id !== id);
+      return;
+    }
+    entry.isExiting = true;
+    renderToasts();
+    window.setTimeout(() => {
+      state.notices = state.notices.filter((notice) => notice.id !== id);
+      toastElements.delete(id);
+      if (state.noticeTimers[id]) {
+        window.clearTimeout(state.noticeTimers[id]);
+        delete state.noticeTimers[id];
+      }
+      renderToasts();
+    }, BLP_ANIM_DURATION);
+  }
+
+  function clearAllNotices() {
+    Object.values(state.noticeTimers).forEach((timer) => window.clearTimeout(timer));
+    state.noticeTimers = {};
+    toastElements.clear();
+    state.notices = [];
+    renderToasts();
   }
 
   function applyAccountPayload(payload) {
@@ -417,7 +459,7 @@
   }
 
   function authGate(title, description) {
-    const wrapper = node("div", "auth-gate");
+    const wrapper = node("div", "blp-window auth-gate");
     const mark = node("div", "auth-gate__mark", "o");
     const content = node("div", "auth-gate__content");
     content.append(
@@ -517,7 +559,7 @@
         ),
       );
     } else {
-      const card = node("div", "card table-card");
+      const card = node("div", "blp-window card table-card model-row-card");
       const tableWrap = node("div", "table-wrap");
       const table = node("table", "data-table data-table--models");
       table.append(node("caption", "sr-only", "Registered models"));
@@ -595,7 +637,7 @@
     }
 
     const content = node("div", "model-detail-content");
-    const infoCard = node("section", "card model-detail-card");
+    const infoCard = node("section", "blp-window card model-detail-card");
     const heading = node("div", "card-heading");
     const headingCopy = node("div");
     headingCopy.append(node("p", "eyebrow", "MODEL"), node("h2", "card-title", modelName));
@@ -615,7 +657,7 @@
   }
 
   function renderModelExamples(modelName) {
-    const section = node("section", "model-examples");
+    const section = node("section", "blp-window card model-examples");
     const heading = node("div", "model-examples__heading");
     heading.append(
       node("h2", "card-title", "Example requests"),
@@ -662,7 +704,7 @@
   }
 
   function renderRequestExample(title, snippet, streamingSnippet) {
-    const card = node("article", "card request-example");
+    const card = node("article", "blp-window card request-example");
     const heading = node("div", "request-example__heading");
     const copy = actionButton("Copy", "copy-snippet", "button button--ghost button--small");
     setAttributes(copy, { "aria-label": `Copy ${title} example request` });
@@ -758,7 +800,7 @@
   }
 
   function renderWorkspaceSidebar() {
-    const sidebar = node("aside", "card workspace-sidebar");
+    const sidebar = node("aside", "blp-window card workspace-sidebar");
     const heading = node("div", "section-heading");
     heading.append(node("div", "section-heading__copy", "Your workspaces"), node("span", "count-badge", formatNumber(state.workspaces.length)));
     sidebar.append(heading);
@@ -792,7 +834,7 @@
     setAttributes(form, { "data-form": "create-workspace", novalidate: "" });
     const heading = node("div", "form-heading", "Create workspace");
     const field = formField("workspace-name", "Name", "e.g. experiments", "text", true, 64);
-    const submit = node("button", "button button--primary button--full", state.busyAction === "create-workspace" ? "Creating…" : "Create workspace");
+    const submit = node("button", "button button--primary button--full", state.busyAction === "create-workspace" ? "Creating\u2026" : "Create workspace");
     setAttributes(submit, { type: "submit", disabled: state.busyAction === "create-workspace" ? "" : null });
     form.append(heading, field, submit);
     if (state.workspaceFormError) {
@@ -817,7 +859,7 @@
   }
 
   function renderKeysCard(workspaceName) {
-    const card = node("div", "card keys-card");
+    const card = node("div", "blp-window card keys-card");
     const heading = node("div", "card-heading");
     const headingCopy = node("div");
     headingCopy.append(
@@ -880,7 +922,7 @@
         setAttributes(revoke, { "data-key-id": id, "data-workspace-name": state.selectedWorkspaceName });
         actionCell.append(revoke);
       } else {
-        actionCell.append(node("span", "muted-copy", "—"));
+        actionCell.append(node("span", "muted-copy", "\u2014"));
       }
       item.append(keyCell, node("td", "", formatDate(isObject(key) ? key.created_at : "")), node("td", "", status), actionCell);
       body.append(item);
@@ -894,7 +936,7 @@
     const form = node("form", "inline-form");
     setAttributes(form, { "data-form": "create-key", novalidate: "" });
     const field = formField("key-label", "New inference key label", "Optional", "text", false, 120);
-    const submit = node("button", "button button--ghost", state.busyAction === "create-key" ? "Issuing…" : "Create inference key");
+    const submit = node("button", "button button--ghost", state.busyAction === "create-key" ? "Issuing\u2026" : "Create inference key");
     setAttributes(submit, { type: "submit", disabled: state.busyAction === "create-key" ? "" : null, "data-workspace-name": workspaceName });
     form.append(field, submit);
     if (state.keyFormError) {
@@ -938,7 +980,7 @@
   }
 
   function renderUsageCard() {
-    const card = node("div", "card usage-card");
+    const card = node("div", "blp-window card usage-card");
     const heading = node("div", "card-heading");
     const copy = node("div");
     copy.append(node("p", "eyebrow", "METERING"), node("h3", "card-title", "Usage summary"), node("p", "card-description", "Totals returned for the current workspace context."));
@@ -1098,7 +1140,7 @@
   }
 
   function statusCard(title, eyebrow, fields) {
-    const card = node("div", "card status-card");
+    const card = node("div", "blp-window card status-card");
     card.append(node("p", "eyebrow", eyebrow), node("h2", "card-title", title));
     const list = node("dl", "status-list");
     fields.forEach(([label, value]) => {
@@ -1171,7 +1213,7 @@
   }
 
   function renderPasswordCard() {
-    const card = node("div", "card context-card password-card");
+    const card = node("div", "blp-window card context-card password-card");
     card.append(
       node("p", "eyebrow", "SECURITY"),
       node("h2", "card-title", "Change password"),
@@ -1185,7 +1227,7 @@
       formField("confirm_password", "Confirm new password", "Enter the new password again", "password", true, 256, 8, "new-password"),
     );
     const busy = state.busyAction === "change-password";
-    const submit = node("button", "button button--primary button--full", busy ? "Changing…" : "Change password");
+    const submit = node("button", "button button--primary button--full", busy ? "Changing\u2026" : "Change password");
     setAttributes(submit, { type: "submit", disabled: busy ? "" : null });
     form.append(submit);
     if (state.passwordFormError) {
@@ -1208,13 +1250,13 @@
     }
     const user = state.user || {};
     const content = node("div", "profile-grid");
-    const identity = node("div", "card identity-card");
+    const identity = node("div", "blp-window card identity-card");
     identity.append(node("p", "eyebrow", "IDENTITY"), node("h2", "card-title", safeString(user.username, "User")));
     const identityList = node("dl", "status-list");
     identityList.append(node("dt", "status-list__term", "Username"), node("dd", "status-list__value", safeString(user.username, "User")), node("dt", "status-list__term", "User ID"), node("dd", "status-list__value", safeString(user.user_id)));
     identity.append(identityList);
 
-    const workspaceCard = node("div", "card profile-workspaces-card");
+    const workspaceCard = node("div", "blp-window card profile-workspaces-card");
     const workspaceHeading = node("div", "card-heading");
     workspaceHeading.append(node("div", "card-heading__copy", "Your workspaces"), node("span", "count-badge", formatNumber(state.workspaces.length)));
     workspaceCard.append(node("p", "eyebrow", "ACCESS"), workspaceHeading);
@@ -1248,11 +1290,12 @@
       "view-root--refresh",
       state.renderedView === state.activeView
     );
-    renderNotice();
+    renderToasts();
     renderView();
     renderProfileMenu();
     renderModal();
     updateLivePolling();
+    applyFirstMountStagger();
     state.renderedView = state.activeView;
   }
 
@@ -1293,28 +1336,89 @@
     }
   }
 
-  function renderNotice() {
-    clear(elements.noticeRegion);
-    if (!state.notice) {
+  function renderToasts() {
+    if (!elements.toastStack) {
       return;
     }
-    const notice = node("div", `notice notice--${state.notice.tone}`);
-    notice.append(node("span", "notice__dot"), node("span", "notice__message", state.notice.message));
-    elements.noticeRegion.append(notice);
+    const activeIds = new Set(state.notices.map((notice) => notice.id));
+    // Remove toast elements that are no longer in state nor exiting.
+    toastElements.forEach((entry, id) => {
+      if (!activeIds.has(id) && !entry.isExiting) {
+        entry.element.remove();
+        toastElements.delete(id);
+      }
+    });
+    state.notices.forEach((notice) => {
+      let entry = toastElements.get(notice.id);
+      if (!entry) {
+        const el = node("div", `blp-window toast toast--${notice.tone}`);
+        el.dataset.noticeId = String(notice.id);
+        el.setAttribute("role", "status");
+        el.append(node("span", "toast__dot"), node("span", "toast__message", notice.message));
+        elements.toastStack.append(el);
+        // First mount: trigger Enter on next frame so the animation starts
+        // after the element is in the layout.
+        entry = { element: el, isNew: true, isExiting: false };
+        toastElements.set(notice.id, entry);
+        requestAnimationFrame(() => {
+          el.classList.add("blp-enter");
+        });
+      } else {
+        // Only update message text if the message changed (e.g., re-same-id).
+        const messageEl = entry.element.querySelector(".toast__message");
+        if (messageEl && messageEl.textContent !== notice.message) {
+          messageEl.textContent = notice.message;
+        }
+      }
+      if (entry.isExiting) {
+        entry.element.classList.add("blp-exit");
+      } else {
+        entry.element.classList.remove("blp-exit");
+      }
+    });
   }
 
   function renderProfileMenu() {
-    clear(elements.profileMenu);
-    elements.profileMenu.hidden = !state.profileOpen;
-    elements.profileTrigger.setAttribute("aria-expanded", state.profileOpen ? "true" : "false");
-    const avatar = elements.profileTrigger.querySelector(".profile-trigger__avatar");
+    const menu = elements.profileMenu;
+    const trigger = elements.profileTrigger;
+    if (!state.profileOpen) {
+      // Closing: if we've ever opened, keep the element mounted for the exit animation.
+      trigger.setAttribute("aria-expanded", "false");
+      if (profileMenuRendered.open) {
+        profileMenuRendered.open = false;
+        clear(menu);
+        menu.classList.remove("blp-enter");
+        menu.classList.add("blp-exit");
+        menu.hidden = false;
+        window.setTimeout(() => {
+          if (state.profileOpen) {
+            // Reopened during exit; cancel.
+            menu.classList.remove("blp-exit");
+            profileMenuRendered.open = true;
+            return;
+          }
+          menu.classList.remove("blp-exit");
+          menu.hidden = true;
+          profileMenuRendered.hasContent = false;
+        }, BLP_ANIM_DURATION);
+      } else {
+        menu.classList.remove("blp-enter", "blp-exit");
+        menu.hidden = true;
+        profileMenuRendered.hasContent = false;
+      }
+      return;
+    }
+
+    // Opening: cancel any pending exit, then render content.
+    menu.classList.remove("blp-exit");
+    menu.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    const avatar = trigger.querySelector(".profile-trigger__avatar");
     const username = state.user?.username;
     if (avatar) {
       avatar.textContent = username ? username.slice(0, 1).toUpperCase() : "?";
     }
-    if (!state.profileOpen) {
-      return;
-    }
+    clear(menu);
     const menuHeader = node("div", "profile-menu__header");
     menuHeader.append(node("span", "eyebrow", state.sessionToken ? "SIGNED IN" : "LOCAL ACCESS"));
     if (state.sessionToken && state.user) {
@@ -1322,20 +1426,26 @@
     } else {
       menuHeader.append(node("strong", "profile-menu__username", "Not signed in"));
     }
-    elements.profileMenu.append(menuHeader);
+    menu.append(menuHeader);
     if (state.authNotice) {
-      elements.profileMenu.append(node("p", "profile-menu__notice", state.authNotice));
+      menu.append(node("p", "profile-menu__notice", state.authNotice));
     }
-    elements.profileMenu.append(node("div", "profile-menu__divider"));
+    menu.append(node("div", "profile-menu__divider"));
     if (state.sessionToken) {
       const profile = menuButton("View profile", "profile-view");
       const loggingOut = state.busyAction === "logout";
-      const logoutButton = menuButton(loggingOut ? "Logging out…" : "Log out", "logout");
+      const logoutButton = menuButton(loggingOut ? "Logging out\u2026" : "Log out", "logout");
       logoutButton.classList.add("menu-item--danger");
       setAttributes(logoutButton, { disabled: loggingOut ? "" : null });
-      elements.profileMenu.append(profile, logoutButton);
+      menu.append(profile, logoutButton);
     } else {
-      elements.profileMenu.append(menuButton("Log in", "open-login"), menuButton("Sign up", "open-signup"));
+      menu.append(menuButton("Log in", "open-login"), menuButton("Sign up", "open-signup"));
+    }
+    profileMenuRendered.open = true;
+    profileMenuRendered.hasContent = true;
+    if (!profileMenuRendered.element) {
+      menu.classList.add("blp-enter");
+      profileMenuRendered.element = menu;
     }
   }
 
@@ -1346,25 +1456,77 @@
   }
 
   function renderModal() {
-    clear(elements.modalRoot);
-    elements.modalRoot.hidden = !state.modal;
+    const root = elements.modalRoot;
     document.body.classList.toggle("modal-open", Boolean(state.modal));
     if (!state.modal) {
+      // Closing: trigger exit animation and keep node mounted for BLP_ANIM_DURATION.
+      root.setAttribute("aria-hidden", "true");
+      if (modalRendered.kind) {
+        modalRendered.kind = null;
+        modalRendered.secret = null;
+        const panel = root.querySelector(".modal-backdrop");
+        if (panel) {
+          panel.classList.remove("blp-enter");
+          panel.classList.add("blp-exit");
+          window.setTimeout(() => {
+            if (state.modal) {
+              // Reopened during exit; cancel.
+              panel.classList.remove("blp-exit");
+              return;
+            }
+            clear(root);
+            root.hidden = true;
+          }, BLP_ANIM_DURATION);
+        } else {
+          clear(root);
+          root.hidden = true;
+        }
+      } else {
+        clear(root);
+        root.hidden = true;
+      }
       return;
     }
-    const backdrop = node("div", "modal-backdrop");
-    const panel = node("section", "modal-panel");
-    setAttributes(panel, { role: "dialog", "aria-modal": "true", "aria-labelledby": "modal-title" });
-    const close = node("button", "modal-close", "Close");
-    setAttributes(close, { type: "button", "data-action": "close-modal", "aria-label": "Close dialog" });
-    panel.append(close);
-    if (state.modal.kind === "secret") {
-      renderSecretModal(panel);
+    root.hidden = false;
+    root.setAttribute("aria-hidden", "false");
+    // Decide whether to rebuild the modal content.
+    const modal = state.modal;
+    const sameKind = modalRendered.kind === modal.kind;
+    const sameSecret = modal.kind !== "secret" || modalRendered.secret === modal.secret;
+    if (!(sameKind && sameSecret)) {
+      clear(root);
+      const backdrop = node("div", "modal-backdrop");
+      const panel = node("section", "modal-panel");
+      setAttributes(panel, { role: "dialog", "aria-modal": "true", "aria-labelledby": "modal-title" });
+      // BLP TILE: no chrome. Dismissal = backdrop click + Escape +
+      // a content-level action (the secret modal exposes a "Done" button).
+      if (modal.kind === "secret") {
+        renderSecretModal(panel);
+      } else {
+        renderAuthModal(panel, modal.kind);
+      }
+      backdrop.append(panel);
+      root.append(backdrop);
+      modalRendered.kind = modal.kind;
+      modalRendered.secret = modal.kind === "secret" ? modal.secret : null;
+      modalRendered.element = backdrop;
+      // requestAnimationFrame so the animation starts after the element is in the DOM.
+      requestAnimationFrame(() => {
+        backdrop.classList.add("blp-enter");
+      });
     } else {
-      renderAuthModal(panel, state.modal.kind);
+      // Same modal, same secret: update busy state and error in place.
+      const panel = root.querySelector(".modal-panel");
+      if (panel) {
+        // Re-render content for busy/error updates.
+        clear(panel);
+        if (modal.kind === "secret") {
+          renderSecretModal(panel);
+        } else {
+          renderAuthModal(panel, modal.kind);
+        }
+      }
     }
-    backdrop.append(panel);
-    elements.modalRoot.append(backdrop);
   }
 
   function renderAuthModal(panel, kind) {
@@ -1390,7 +1552,7 @@
         isLogin ? "current-password" : "new-password",
       ),
     );
-    const submit = node("button", "button button--primary button--full", state.modal.busy ? "Working…" : isLogin ? "Log in" : "Sign up");
+    const submit = node("button", "button button--primary button--full", state.modal.busy ? "Working\u2026" : isLogin ? "Log in" : "Sign up");
     setAttributes(submit, { type: "submit", disabled: state.modal.busy ? "" : null });
     form.append(submit);
     if (state.modal.error) {
@@ -1427,6 +1589,9 @@
   }
 
   function closeModal() {
+    if (!state.modal) {
+      return;
+    }
     state.modal = null;
     render();
   }
@@ -1769,6 +1934,8 @@
     state.authNotice = "";
     state.profileOpen = false;
     state.activeView = "models";
+    state.modal = null;
+    clearAllNotices();
     render();
     showNotice("You are logged out.", "success");
   }
@@ -1779,7 +1946,7 @@
     }
     state.activeView = viewName;
     state.profileOpen = false;
-    state.notice = null;
+    clearAllNotices();
     render();
     if (!state.sessionToken) {
       return;
@@ -1841,6 +2008,21 @@
   function retryWorkspace() {
     state.workspaceData.status = "idle";
     loadWorkspaceData();
+  }
+
+  function applyFirstMountStagger() {
+    if (firstMountHandled) {
+      return;
+    }
+    firstMountHandled = true;
+    if (!elements.tilingSpace) {
+      return;
+    }
+    const windows = elements.tilingSpace.querySelectorAll(".blp-window");
+    windows.forEach((win, idx) => {
+      win.style.setProperty("--blp-stagger", `${idx * BLP_STAGGER_STEP}ms`);
+      win.classList.add("blp-first-mount");
+    });
   }
 
   function onClick(event) {
@@ -2001,7 +2183,7 @@
   function renderLiveEngineCard(view) {
     const data = isObject(view.data) ? view.data : {};
     const engineData = isObject(data.engine) ? data.engine : {};
-    const card = node("section", "card live-card live-card--engine");
+    const card = node("section", "blp-window card live-card live-card--engine");
     const heading = node("div", "card-heading");
     const headingCopy = node("div");
     headingCopy.append(
@@ -2016,9 +2198,9 @@
 
     const list = node("dl", "status-list");
     const fields = [
-      ["Engine", safeString(engineData.engine, "—")],
+      ["Engine", safeString(engineData.engine, "\u2014")],
       ["Model", safeString(engineData.model, "no model loaded")],
-      ["Port", safeString(engineData.port, "—")],
+      ["Port", safeString(engineData.port, "\u2014")],
       ["Loaded at", formatDate(engineData.loaded_at)],
       ["Uptime", humanizeUptime(engineData.uptime_seconds)],
     ];
@@ -2036,7 +2218,7 @@
     const count = Number(inflight.count) || 0;
     const requests = Array.isArray(inflight.requests) ? inflight.requests : [];
 
-    const card = node("section", "card live-card live-card--inflight");
+    const card = node("section", "blp-window card live-card live-card--inflight");
     const heading = node("div", "card-heading");
     const headingCopy = node("div");
     headingCopy.append(
@@ -2073,13 +2255,13 @@
     const body = node("tbody");
     requests.forEach((req) => {
       const elapsed = Number(req?.elapsed_seconds);
-      const elapsedText = Number.isFinite(elapsed) ? `${elapsed.toFixed(1)}s` : "—";
+      const elapsedText = Number.isFinite(elapsed) ? `${elapsed.toFixed(1)}s` : "\u2014";
       const row = node("tr");
       row.append(
-        node("td", "model-name", safeString(req?.user, "—")),
-        node("td", "", safeString(req?.workspace, "—")),
-        node("td", "model-name", safeString(req?.model, "—")),
-        node("td", "", safeString(req?.endpoint, "—")),
+        node("td", "model-name", safeString(req?.user, "\u2014")),
+        node("td", "", safeString(req?.workspace, "\u2014")),
+        node("td", "model-name", safeString(req?.model, "\u2014")),
+        node("td", "", safeString(req?.endpoint, "\u2014")),
         node("td", "numeric-cell", elapsedText),
       );
       body.append(row);
@@ -2094,7 +2276,7 @@
     const data = isObject(view.data) ? view.data : {};
     const models = Array.isArray(data.models) ? data.models : [];
 
-    const card = node("section", "card live-card live-card--models");
+    const card = node("section", "blp-window card live-card live-card--models");
     const heading = node("div", "card-heading");
     const headingCopy = node("div");
     headingCopy.append(
@@ -2122,7 +2304,7 @@
     models.forEach((entry) => {
       const row = node("tr");
       row.append(
-        node("td", "model-name", safeString(entry?.model, "—")),
+        node("td", "model-name", safeString(entry?.model, "\u2014")),
         node("td", "numeric-cell", formatNumber(entry?.requests)),
         node("td", "numeric-cell", formatNumber(entry?.total_tokens)),
       );
@@ -2136,11 +2318,11 @@
 
   function humanizeUptime(seconds) {
     if (seconds === null || seconds === undefined) {
-      return "—";
+      return "\u2014";
     }
     const total = Number(seconds);
     if (!Number.isFinite(total) || total < 0) {
-      return "—";
+      return "\u2014";
     }
     const totalSecs = Math.floor(total);
     if (totalSecs < 60) {

@@ -9,33 +9,34 @@
   <script src="/ui/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar__inner">
-      <button class="wordmark" type="button" data-action="view" data-view="models" aria-label="Go to models">
-        <span class="wordmark__mark" aria-hidden="true">o</span><span>outo-llms</span>
-      </button>
-      <nav class="primary-nav" id="main-nav" aria-label="Main navigation" role="tablist">
-        <button class="nav-tab" type="button" role="tab" data-action="view" data-view="models" aria-selected="true">Models</button>
-        <button class="nav-tab" type="button" role="tab" data-action="view" data-view="workspaces" aria-selected="false">Workspaces</button>
-        <button class="nav-tab" type="button" role="tab" data-action="view" data-view="live" aria-selected="false">Live</button>
-        <button class="nav-tab" type="button" role="tab" data-action="view" data-view="status" aria-selected="false">Server status</button>
-      </nav>
-      <div class="profile-anchor">
-        <button class="profile-trigger" id="profile-trigger" type="button" data-action="toggle-profile" aria-haspopup="true" aria-expanded="false">
-          <span class="profile-trigger__avatar" aria-hidden="true">?</span>
-          <span class="profile-trigger__label">Profile</span>
-          <span class="profile-trigger__chevron" aria-hidden="true"></span>
+  <div class="blp-tiling-space" id="tiling-space">
+    <header class="topbar blp-window" id="topbar" data-blp-window="dynamic">
+      <div class="topbar__inner">
+        <button class="wordmark" type="button" data-action="view" data-view="models" aria-label="Go to models">
+          <span class="wordmark__mark" aria-hidden="true">o</span><span class="wordmark__text">outo-llms</span>
         </button>
-        <div class="profile-menu" id="profile-menu" role="menu" hidden></div>
+        <nav class="primary-nav" id="main-nav" aria-label="Main navigation" role="tablist">
+          <button class="nav-tab" type="button" role="tab" data-action="view" data-view="models" aria-selected="true">Models</button>
+          <button class="nav-tab" type="button" role="tab" data-action="view" data-view="workspaces" aria-selected="false">Workspaces</button>
+          <button class="nav-tab" type="button" role="tab" data-action="view" data-view="live" aria-selected="false">Live</button>
+          <button class="nav-tab" type="button" role="tab" data-action="view" data-view="status" aria-selected="false">Server status</button>
+        </nav>
+        <div class="profile-anchor">
+          <button class="profile-trigger" id="profile-trigger" type="button" data-action="toggle-profile" aria-haspopup="true" aria-expanded="false">
+            <span class="profile-trigger__avatar" aria-hidden="true">?</span>
+            <span class="profile-trigger__label">Profile</span>
+            <span class="profile-trigger__chevron" aria-hidden="true"></span>
+          </button>
+          <div class="profile-menu blp-window blp-window--fixed-floating" id="profile-menu" role="menu" hidden></div>
+        </div>
       </div>
-    </div>
-  </header>
+    </header>
 
-  <main class="app-shell" id="app-shell">
-    <div class="notice-region" id="notice-region" aria-live="polite"></div>
-    <section id="view-root" aria-live="polite"></section>
-  </main>
+    <section class="view-root blp-window" id="view-root" aria-live="polite"></section>
+  </div>
 
-  <div class="modal-root" id="modal-root" hidden></div>
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <div class="modal-root blp-window blp-window--full-floating" id="modal-root" hidden></div>
 </body>
 </html>
