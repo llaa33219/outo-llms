@@ -44,6 +44,7 @@ Do not run `outo-llms setup`, start the server, or run automated tests in this e
 * API keys are stored as SHA-256 hex digests. Plaintext keys are never logged.
 * Modules are small and focused. Add a new module when a concern does not fit an existing one. Avoid growing catch-all modules.
 * Every system-touching code path must go through `core/consent.py`. That includes subprocess invocation, filesystem writes outside the project tree, process control, firewall changes, and certificate generation. The hard rule is the same for contributors: outo-llms never touches the system without announcing it.
+* Web UI container changes (layout, window types, gaps, borders, window animations) follow [`style.md`](../style.md) (BLP TILE). Inner component visuals follow the dark console tokens in `src/outo_llms/server/ui/static/style.css`.
 
 ## Adding a CLI command
 

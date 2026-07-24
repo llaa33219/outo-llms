@@ -91,6 +91,8 @@ client                outo-llms API server                EngineManager       en
 
 The root request, `GET /`, serves the dependency-free GUI from `server/ui/static/`; named assets are available at `/ui/<name>`, and Swagger UI remains at `/docs`.
 
+The GUI's container layout follows **BLP TILE**, the design language in [`style.md`](../style.md) at the repository root: every panel is a window with a 4px border and 4px gaps, modals and toasts float, and window enter/exit animations follow its rules. The inner visual system (dark console palette, typography, components) lives in `style.css`; BLP TILE governs containers only.
+
 Two auth dependencies live in `server/deps.py`:
 
 * `ApiKeyDep` accepts an `outo_sk_` Bearer only and resolves to a `WorkspaceContext`. It is used by `POST /v1/chat/completions`, `POST /v1/completions`, and `GET /v1/models`.
