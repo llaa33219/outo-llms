@@ -147,7 +147,7 @@ def add(
         None,
         "--source",
         "-s",
-        help="Hugging Face repo id or path to a local .gguf file (default: the name).",
+        help="Hugging Face repo id, a local .gguf file, or a local HF-format model directory (default: the name).",
     ),
     kind: str | None = typer.Option(
         None,
@@ -178,7 +178,9 @@ def add(
         resolved_source = source if source is not None else name
         if kind is not None:
             resolved_kind = kind
-        elif resolved_source.endswith(".gguf") or Path(resolved_source).exists():
+        elif Path(resolved_source).is_dir():
+            resolved_kind = "hf"
+        elif resolved_source.endswith(".gguf") or Path(resolved_source).is_file():
             resolved_kind = "gguf"
         else:
             resolved_kind = "hf"

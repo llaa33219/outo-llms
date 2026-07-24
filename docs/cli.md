@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.7.4`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.7.5`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`
@@ -72,8 +72,8 @@ Options:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--source`, `-s` | `NAME` | Hugging Face repository id or a local `.gguf` path. For llama.cpp, a `repo:file` source selects a file in a Hugging Face repository. |
-| `--kind`, `-k` | guessed from source | Model kind, either `hf` or `gguf`. If omitted, a source ending in `.gguf` or an existing path is treated as `gguf`; otherwise it is treated as `hf`. |
+| `--source`, `-s` | `NAME` | Hugging Face repository id, a local `.gguf` file path, or a local HF-format model directory. For llama.cpp, a `repo:file` source selects a file in a Hugging Face repository. |
+| `--kind`, `-k` | guessed from source | Model kind, either `hf` or `gguf`. If omitted: a local directory is treated as `hf`, a `.gguf` file as `gguf`, and anything else (a repo id) as `hf`. |
 | `--hf` | - | Shortcut for installing a Hugging Face model: takes the repository id, sets the source and forces `kind=hf`. Cannot be combined with `--source` or `--kind`. |
 
 When the active engine cannot serve the registered kind, the CLI prints the exact commands that fix the registration (`models remove` + `models add -k <kind> -s <source>`) plus a flag cheat sheet, so a wrong `--hf` on a GGUF repository is easy to recover from.
@@ -94,6 +94,9 @@ outo-llms models add tinyllama \
 
 # Local GGUF path, with kind inferred from the path (no download)
 outo-llms models add local-model --source /path/to/model.gguf
+
+# Local HF-format directory for vLLM (config.json + tokenizer + safetensors)
+outo-llms models add local-llama --source /path/to/Llama-3-8B-Instruct --kind hf
 
 # Register without downloading, fetch later
 outo-llms models add tinyllama \
