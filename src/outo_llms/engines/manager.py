@@ -50,7 +50,7 @@ _DOWNLOAD_SNIPPET = """\
 import os
 import sys
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
 
 repo_id = sys.argv[1]
 allow_patterns = sys.argv[2:] if len(sys.argv) > 2 else None
@@ -58,6 +58,18 @@ force = os.environ.get("OUTO_FORCE_DOWNLOAD") == "1"
 local_path = snapshot_download(
     repo_id=repo_id, allow_patterns=allow_patterns, force_download=force
 )
+for extra in (
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "chat_template.jinja",
+):
+    try:
+        hf_hub_download(repo_id, extra, force_download=force)
+        print(f"also fetched: {extra}")
+    except Exception:
+        pass
 print(f"weights ready at: {local_path}")
 """
 
