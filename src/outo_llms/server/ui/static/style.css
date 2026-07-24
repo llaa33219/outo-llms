@@ -245,6 +245,7 @@ input:focus-visible,
 
 .topbar {
   position: relative;
+  z-index: var(--blp-z-fixed-float);
   height: 56px;
   background: var(--inner-surface);
   overflow: visible;
@@ -272,6 +273,12 @@ input:focus-visible,
   font-weight: 700;
   letter-spacing: -0.02em;
   flex: 0 0 auto;
+}
+
+.wordmark__logo {
+  display: block;
+  height: 28px;
+  width: auto;
 }
 
 .wordmark:hover {

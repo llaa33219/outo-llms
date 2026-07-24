@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="outo-llms" width="800">
+</p>
+
 # outo-llms
 
 Deploy local LLMs behind your own managed, OpenAI-compatible API server.
