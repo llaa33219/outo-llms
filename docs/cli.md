@@ -1,6 +1,6 @@
 # CLI reference
 
-The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.8.0`.
+The package installs one console script, `outo-llms`. Running it without a subcommand shows help. The commands below are the complete command tree in version `0.8.1`.
 
 > **Breaking change in 0.3.0.** `outo-llms setup` no longer creates an
 > account; signup is a separate, password-protected HTTP call. `models add`
@@ -116,8 +116,21 @@ If no engine is installed or the active engine does not serve the model kind, re
 
 The command initializes the database and inserts one registry row. Model names must be unique. A duplicate name or invalid kind exits with an error.
 
-### `outo-llms models download`
+### `outo-llms models edit`
 
+```text
+outo-llms models edit NAME [--name NEW] [--source/-s SRC] [--kind/-k KIND] [--engine/-e ID | --no-engine]
+```
+
+Edits fields of an already-registered model without removing it. Every option is independent; omitted fields stay unchanged. `--engine` pins the model to an instance (validated), `--no-engine` clears the pin back to the default engine. Renaming validates uniqueness, and changing the source prints the `models download` hint for the new weights.
+
+```bash
+outo-llms models edit bonsai --engine llamacpp-dspark   # re-pin a wrong engine
+outo-llms models edit bonsai --no-engine                # back to the default engine
+outo-llms models edit bonsai --name bonsai-27b -k gguf  # rename + re-kind
+```
+
+### `outo-llms models download`
 ```text
 outo-llms models download NAME
 ```
