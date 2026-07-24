@@ -136,6 +136,11 @@ def start_server() -> None:
         start_new_session=True,
     )
     write_pid(paths.pid_file(), proc.pid)
+    import outo_llms
+
+    paths.server_version_file().write_text(
+        f"{outo_llms.__version__}\n", encoding="utf-8"
+    )
     # A wildcard bind address is not connectable; probe loopback instead.
     check_host = "127.0.0.1" if cfg.server.host in ("0.0.0.0", "::") else cfg.server.host
     deadline = time.monotonic() + _STARTUP_TIMEOUT
@@ -159,6 +164,17 @@ def start_server() -> None:
     )
 
 
+def server_version() -> str | None:
+    """Version of the running server process, recorded at its start."""
+    pid = server_pid()
+    if pid is None:
+        return None
+    try:
+        return paths.server_version_file().read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def stop_server(*, timeout: float = 10.0) -> bool:
     """Stop the API server. Returns True if a process was stopped."""
     pid = read_pid(paths.pid_file())
@@ -168,6 +184,10 @@ def stop_server(*, timeout: float = 10.0) -> bool:
     consent.log_action("stop_server", f"pid {pid}")
     stopped = kill_pid(pid, timeout=timeout)
     remove_pid(paths.pid_file())
+    try:
+        paths.server_version_file().unlink()
+    except FileNotFoundError:
+        pass
     return stopped
 
 

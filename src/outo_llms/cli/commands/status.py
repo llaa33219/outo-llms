@@ -50,6 +50,16 @@ def status() -> None:
     """Show server, engine, and path status."""
     console.print(_server_table())
 
+    import outo_llms
+
+    server_version = process.server_version()
+    if server_version is not None and server_version != outo_llms.__version__:
+        console.print(
+            f"[bold yellow]the running server is v{server_version} but the CLI is "
+            f"v{outo_llms.__version__} - run `outo-llms restart` to pick up the "
+            "installed version.[/]"
+        )
+
     try:
         from ...engines.manager import EngineManager
 

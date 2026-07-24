@@ -48,6 +48,10 @@ def pid_file() -> Path:
     return data_dir() / "server.pid"
 
 
+def server_version_file() -> Path:
+    return data_dir() / "server.version"
+
+
 def server_log() -> Path:
     return logs_dir() / "server.log"
 
