@@ -68,6 +68,56 @@ def remove_model(name: str) -> bool:
     return cur.rowcount > 0
 
 
+class _Unset:
+    """Sentinel type for "leave the field unchanged" in update_model."""
+
+
+_KEEP = _Unset()
+
+
+def update_model(
+    name: str,
+    *,
+    new_name: str | None = None,
+    source: str | None = None,
+    kind: str | None = None,
+    engine: str | None | _Unset = _KEEP,
+) -> bool:
+    """Update registry fields of an existing model; False if not found.
+
+    ``engine`` is tri-state: omitted keeps the pin, a string sets it, and
+    None clears it (back to the default engine).
+    """
+    db.init_db()
+    if kind is not None and kind not in _KINDS:
+        raise ValueError(f"kind must be one of {_KINDS}, got {kind!r}")
+    assignments: list[str] = []
+    values: list[str | None] = []
+    if new_name is not None:
+        assignments.append("name = ?")
+        values.append(new_name)
+    if source is not None:
+        assignments.append("source = ?")
+        values.append(source)
+    if kind is not None:
+        assignments.append("kind = ?")
+        values.append(kind)
+    if not isinstance(engine, _Unset):
+        assignments.append("engine = ?")
+        values.append(engine)
+    if not assignments:
+        raise ValueError("nothing to update; pass at least one field")
+    with db.get_conn() as conn:
+        try:
+            cur = conn.execute(
+                f"UPDATE models SET {', '.join(assignments)} WHERE name = ?",
+                (*values, name),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"model {new_name!r} is already registered") from exc
+    return cur.rowcount > 0
+
+
 def update_source(name: str, source: str) -> bool:
     """Point a registered model at a different source (e.g. repo:file)."""
     db.init_db()

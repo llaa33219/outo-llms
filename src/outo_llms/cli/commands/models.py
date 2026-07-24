@@ -223,6 +223,79 @@ def add(
         )
 
 
+@models_app.command("edit")
+def edit(
+    name: str = typer.Argument(..., help="Registry name of the model to edit."),
+    new_name: str | None = typer.Option(None, "--name", help="Rename the model."),
+    source: str | None = typer.Option(
+        None, "--source", "-s", help="New source (repo, repo:file, or local path)."
+    ),
+    kind: str | None = typer.Option(None, "--kind", "-k", help="'hf' or 'gguf'."),
+    engine: str | None = typer.Option(
+        None, "--engine", "-e", help="Pin to this engine instance."
+    ),
+    no_engine: bool = typer.Option(
+        False, "--no-engine", help="Clear the engine pin (use the default engine)."
+    ),
+) -> None:
+    """Edit fields of an already-registered model; omitted fields stay unchanged."""
+    from ...server import db, registry
+
+    if all(v is None for v in (new_name, source, kind, engine)) and not no_engine:
+        console.print(
+            "[bold red]error:[/] nothing to edit; pass --name, --source, --kind, "
+            "--engine, or --no-engine."
+        )
+        raise typer.Exit(1)
+    if engine is not None and no_engine:
+        console.print("[bold red]error:[/] --engine and --no-engine cannot be combined.")
+        raise typer.Exit(1)
+
+    db.init_db()
+    before = registry.get_model(name)
+    if before is None:
+        console.print(f"[bold red]error:[/] model '{name}' is not registered.")
+        raise typer.Exit(1)
+    if engine is not None:
+        from ...core import config as config_mod
+
+        try:
+            config_mod.resolve_instance(config_mod.load_config(), engine)
+        except ValueError as exc:
+            console.print(f"[bold red]error:[/] {exc}")
+            raise typer.Exit(1) from exc
+
+    updates: dict[str, str | None] = {}
+    if new_name is not None:
+        updates["new_name"] = new_name
+    if source is not None:
+        updates["source"] = source
+    if kind is not None:
+        updates["kind"] = kind
+    if no_engine:
+        updates["engine"] = None
+    elif engine is not None:
+        updates["engine"] = engine
+    try:
+        registry.update_model(name, **updates)
+    except ValueError as exc:
+        console.print(f"[bold red]error:[/] {exc}")
+        raise typer.Exit(1) from exc
+
+    final_name = new_name if new_name is not None else name
+    after = registry.get_model(final_name)
+    assert after is not None
+    console.print(f"[green]model '{name}' updated:[/]")
+    console.print(f"  name:   {before.name} -> {after.name}")
+    console.print(f"  kind:   {before.kind} -> {after.kind}")
+    console.print(f"  source: {before.source} -> {after.source}")
+    console.print(f"  engine: {before.engine or '-'} -> {after.engine or '-'}")
+    if source is not None and source != before.source:
+        console.print(
+            f"[dim]weights for the new source: `outo-llms models download {final_name}`[/]"
+        )
+
+
 @models_app.command("download")
 def download(
     name: str = typer.Argument(..., help="Registry name of the model to download."),
