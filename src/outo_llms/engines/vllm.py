@@ -27,7 +27,13 @@ class VllmAdapter(EngineAdapter):
         return model.kind == "hf"
 
     def serve_argv(
-        self, python: Path, model: ModelRef, port: int, extra_args: list[str]
+        self,
+        python: Path,
+        model: ModelRef,
+        port: int,
+        extra_args: list[str],
+        *,
+        engine_dir: Path | None = None,
     ) -> list[str]:
         """Argv for vLLM's API server bound to 127.0.0.1 (internal only)."""
         return [
