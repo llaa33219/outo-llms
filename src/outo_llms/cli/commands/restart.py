@@ -12,6 +12,9 @@ console = Console()
 
 def restart() -> None:
     """Restart the outo-llms API server."""
+    from ...core import config as config_mod
+
+    process.ensure_bind_capability(config_mod.load_config().server.port, ask=True)
     try:
         process.restart_server()
     except RuntimeError as exc:

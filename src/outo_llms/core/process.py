@@ -8,6 +8,7 @@ helpers are also reused by the engine manager for engine subprocesses.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -112,6 +113,41 @@ def _tail(path: Path, *, lines: int = 15) -> str:
     except OSError:
         return "<log unavailable>"
     return "\n".join(content[-lines:]) or "<log empty>"
+
+
+def _needs_privileged_port(port: int) -> bool:
+    return port < 1024 and os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0
+
+
+def _has_bind_capability(python: Path) -> bool:
+    """True when the interpreter already holds cap_net_bind_service."""
+    getcap = shutil.which("getcap")
+    if getcap is None:
+        return True  # cannot inspect; let the bind attempt decide
+    result = subprocess.run(
+        [getcap, str(python)], capture_output=True, text=True, check=False
+    )
+    return "cap_net_bind_service" in result.stdout
+
+
+def ensure_bind_capability(port: int, *, ask: bool) -> None:
+    """Re-grant cap_net_bind_service when a privileged port lost it.
+
+    System Python upgrades replace the interpreter binary and silently
+    drop file capabilities, so the grant from setup does not survive.
+    """
+    if not _needs_privileged_port(port):
+        return
+    python = Path(sys.executable).resolve()
+    if _has_bind_capability(python):
+        return
+    target = str(python)
+    consent.run_system(
+        ["sudo", "setcap", "cap_net_bind_service=+ep", target],
+        reason=f"re-grant permission to bind privileged port {port} "
+        "(the capability was lost, e.g. by a system Python update)",
+        ask=ask,
+    )
 
 
 def start_server() -> None:

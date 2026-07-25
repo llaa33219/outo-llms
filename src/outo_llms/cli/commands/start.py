@@ -12,6 +12,9 @@ console = Console()
 
 def start() -> None:
     """Start the outo-llms API server in the background."""
+    from ...core import config as config_mod
+
+    process.ensure_bind_capability(config_mod.load_config().server.port, ask=True)
     try:
         process.start_server()
     except RuntimeError as exc:
