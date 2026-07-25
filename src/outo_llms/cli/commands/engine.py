@@ -222,6 +222,13 @@ _BACKEND_PACKAGES: dict[str, dict[str, list[str]]] = {
         "dnf": ["hipcc", "rocm-hip-devel"],
         "pacman": ["rocm-hip-sdk"],
     },
+    "python-build": {
+        "apt": ["python3-dev", "cmake", "ninja-build"],
+        "dnf": ["python3-devel", "cmake", "ninja-build"],
+        "pacman": ["cmake", "ninja"],
+        "xbps": ["python3-devel", "cmake", "ninja"],
+        "apk": ["python3-dev", "cmake", "ninja"],
+    },
 }
 
 

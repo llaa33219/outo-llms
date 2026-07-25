@@ -352,6 +352,16 @@ class EngineManager:
             return [requirement, "huggingface-hub>=0.24"]
         return [requirement]
 
+    def _vllm_build_check(self) -> None:
+        """Preflight for source-building vLLM (cmake + Python headers)."""
+        import sysconfig
+
+        if shutil.which("cmake") is None:
+            raise BackendDepsError("python-build", "cmake")
+        include = Path(sysconfig.get_paths()["include"]) / "Python.h"
+        if not include.is_file():
+            raise BackendDepsError("python-build", "Python.h")
+
     def install(
         self, name: str, *, on_event: Callable[[str], None] | None = None
     ) -> None:
@@ -362,6 +372,8 @@ class EngineManager:
         """
         adapter = self._adapter_for(name)
         instance = self._instance(name)
+        if instance.type == "vllm" and instance.source != "pypi":
+            self._vllm_build_check()
         running = self._live_pid(name)
         if running is not None:
             consent.announce(
