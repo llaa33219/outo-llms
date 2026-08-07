@@ -28,6 +28,10 @@ class SglangAdapter(EngineAdapter):
     display_name: ClassVar[str] = "SGLang"
     pip_requirements: ClassVar[list[str]] = ["sglang"]
     default_port: ClassVar[int] = 8614
+    # cuda uses the PyPI wheels; rocm is a source build. No Vulkan or CPU
+    # backend exists upstream - llama.cpp covers those.
+    supported_backends: ClassVar[list[str]] = ["cuda", "rocm"]
+    default_backend: ClassVar[str] = "cuda"
 
     def supports(self, model: ModelRef) -> bool:
         """SGLang serves Hugging Face models only."""

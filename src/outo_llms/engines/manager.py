@@ -334,7 +334,7 @@ class EngineManager:
             "model": self.current_model(),
             "port": port,
             "base_url": _base_url(port) if port is not None else None,
-            "backend": config_mod.load_config().engine.backend,
+            "backend": self._instance(name).backend,
         }
 
     # -- install / select ------------------------------------------------
@@ -342,8 +342,16 @@ class EngineManager:
     def _instance_requirements(
         self, instance: config_mod.EngineInstance, adapter: EngineAdapter
     ) -> list[str]:
-        """Pip arguments that install an engine instance's runtime package."""
+        """Pip arguments that install an engine instance's runtime package.
+
+        vLLM and SGLang publish CUDA wheels on PyPI; their other backends
+        (vllm rocm/cpu, sglang rocm) build from the upstream git source.
+        """
         if instance.source == "pypi":
+            if instance.type == "vllm" and instance.backend != "cuda":
+                return ["git+https://github.com/vllm-project/vllm.git"]
+            if instance.type == "sglang" and instance.backend != "cuda":
+                return ["git+https://github.com/sgl-project/sglang.git"]
             return list(adapter.pip_requirements)
         if instance.type == "llamacpp" and _is_cmake_source(instance.source):
             return ["huggingface-hub>=0.24"]
@@ -351,6 +359,18 @@ class EngineManager:
         if instance.type == "llamacpp":
             return [requirement, "huggingface-hub>=0.24"]
         return [requirement]
+
+    @staticmethod
+    def _check_backend(
+        name: str, instance: config_mod.EngineInstance, adapter: EngineAdapter
+    ) -> None:
+        """Reject backends the engine cannot run on instead of ignoring them."""
+        if instance.backend not in adapter.supported_backends:
+            raise ValueError(
+                f"engine '{name}' ({instance.type}) does not support backend "
+                f"{instance.backend!r} "
+                f"(supported: {', '.join(adapter.supported_backends)})"
+            )
 
     def _vllm_build_check(self) -> None:
         """Preflight for source-building vLLM (cmake + Python headers)."""
@@ -382,7 +402,10 @@ class EngineManager:
         """
         adapter = self._adapter_for(name)
         instance = self._instance(name)
-        if instance.type == "vllm" and instance.source != "pypi":
+        self._check_backend(name, instance, adapter)
+        if instance.type == "vllm" and (
+            instance.source != "pypi" or instance.backend != "cuda"
+        ):
             self._vllm_build_check()
         if instance.type == "sglang" and instance.source != "pypi":
             self._sglang_build_check()
@@ -404,6 +427,14 @@ class EngineManager:
                 env = self._backend_toolchain_env(instance.backend)
             else:
                 env = self._backend_env(name, adapter, instance.backend)
+        elif instance.type == "vllm" and instance.backend == "rocm":
+            env = self._backend_toolchain_env("rocm")
+            env["VLLM_TARGET_DEVICE"] = "rocm"
+        elif instance.type == "vllm" and instance.backend == "cpu":
+            env = os.environ.copy()
+            env["VLLM_TARGET_DEVICE"] = "cpu"
+        elif instance.type == "sglang" and instance.backend == "rocm":
+            env = self._backend_toolchain_env("rocm")
 
         consent.announce(f"create virtualenv for {adapter.display_name}", str(venv_dir))
         subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
@@ -667,6 +698,7 @@ class EngineManager:
         """Upgrade the engine's runtime in place (new model architectures)."""
         instance = self._instance(name)
         adapter = self._adapter_for(name)
+        self._check_backend(name, instance, adapter)
         if not self.is_installed(name):
             raise RuntimeError(
                 f"engine '{name}' is not installed; run `outo-llms engine install {name}`"
@@ -702,12 +734,13 @@ class EngineManager:
             consent.log_action("upgrade_engine", f"{name} (source rebuild)")
             return
         python = self.venv_python(name)
+        requirements = self._instance_requirements(instance, adapter)
         consent.announce(
             f"upgrade {adapter.display_name} packages",
-            ", ".join(adapter.pip_requirements),
+            ", ".join(requirements),
         )
         self._run_pip(
-            [str(python), "-m", "pip", "install", "--upgrade", *adapter.pip_requirements],
+            [str(python), "-m", "pip", "install", "--upgrade", *requirements],
             on_event,
         )
         consent.log_action("upgrade_engine", name)

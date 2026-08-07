@@ -21,6 +21,9 @@ class VllmAdapter(EngineAdapter):
     display_name: ClassVar[str] = "vLLM"
     pip_requirements: ClassVar[list[str]] = ["vllm>=0.6"]
     default_port: ClassVar[int] = 8613
+    # cuda uses the PyPI wheels; rocm/cpu are source builds (VLLM_TARGET_DEVICE).
+    supported_backends: ClassVar[list[str]] = ["cuda", "rocm", "cpu"]
+    default_backend: ClassVar[str] = "cuda"
 
     def supports(self, model: ModelRef) -> bool:
         """vLLM serves Hugging Face models only."""

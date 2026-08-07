@@ -34,6 +34,10 @@ class EngineAdapter(ABC):
     display_name: ClassVar[str]
     pip_requirements: ClassVar[list[str]]
     default_port: ClassVar[int]
+    # Backends the engine can actually run on; anything else is rejected
+    # with a clear error instead of being silently ignored.
+    supported_backends: ClassVar[list[str]] = ["cuda", "cpu"]
+    default_backend: ClassVar[str] = "cuda"
 
     @abstractmethod
     def serve_argv(

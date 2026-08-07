@@ -25,6 +25,8 @@ class LlamaCppAdapter(EngineAdapter):
     name: ClassVar[str] = "llamacpp"
     display_name: ClassVar[str] = "llama.cpp (llama-cpp-python)"
     default_port: ClassVar[int] = 8612
+    supported_backends: ClassVar[list[str]] = ["vulkan", "cuda", "rocm", "cpu"]
+    default_backend: ClassVar[str] = "vulkan"
 
     def __init__(self, *, binary: bool = False) -> None:
         self.binary = binary

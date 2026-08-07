@@ -215,7 +215,7 @@ outo-llms engine install [NAME]
 
 Creates or recreates the selected engine's isolated venv, upgrades pip in that venv, installs the adapter requirements, and writes its `INSTALLED` marker. If `NAME` is omitted, the active engine is installed.
 
-For llama.cpp the active [backend](#outo-llms-engine-backend) applies: GPU backends compile `llama-cpp-python` from source (`FORCE_CMAKE=1` with the backend's `GGML_*` flag, several minutes); the `cpu` backend uses the fast prebuilt wheel. When the backend's build tools are missing, the command detects the system package manager (apt, dnf, pacman, xbps, apk), offers to install the matching packages with sudo (announced and confirmed), and retries once; declining exits with manual instructions.
+For llama.cpp the active [backend](#outo-llms-engine-backend) applies: GPU backends compile `llama-cpp-python` from source (`FORCE_CMAKE=1` with the backend's `GGML_*` flag, several minutes); the `cpu` backend uses the fast prebuilt wheel. For vLLM, the `cuda` backend installs the PyPI wheels while `rocm`/`cpu` build vLLM from the upstream git source with `VLLM_TARGET_DEVICE`; for SGLang, `rocm` builds from the upstream git source. When the backend's build tools are missing, the command detects the system package manager (apt, dnf, pacman, xbps, apk), offers to install the matching packages with sudo (announced and confirmed), and retries once; declining exits with manual instructions.
 
 ```bash
 # Install the active engine
@@ -233,14 +233,15 @@ The installed requirements are `llama-cpp-python[server]>=0.2.90` plus `huggingf
 ### `outo-llms engine backend`
 
 ```text
-outo-llms engine backend {vulkan|cuda|rocm|cpu}
+outo-llms engine backend BACKEND [--engine ID]
 ```
 
-Selects the llama.cpp GPU backend (`vulkan` by default) and stops the running engine so the next request restarts it with the new flags. Rebuild with `outo-llms engine install llamacpp` afterwards; the command prints the exact reminder. GPU backends serve with `--n_gpu_layers -1`; `cpu` disables acceleration.
+Selects the GPU backend for one engine instance (the active engine when `--engine` is omitted) and stops the running engine so the next request restarts it. The valid values depend on the engine: llama.cpp takes `vulkan` (default), `cuda`, `rocm`, `cpu`; vLLM takes `cuda` (default), `rocm`, `cpu`; SGLang takes `cuda` (default), `rocm`. Anything else is rejected with a clear error listing the supported values. Rebuild with `outo-llms engine install <id>` afterwards; the command prints the exact reminder. The setting is stored per instance. llama.cpp GPU backends serve with `--n_gpu_layers -1`; its `cpu` backend disables acceleration.
 
 ```bash
-outo-llms engine backend cuda     # NVIDIA toolchain build
-outo-llms engine backend cpu      # no acceleration, prebuilt wheel
+outo-llms engine backend cuda                 # llama.cpp NVIDIA toolchain build
+outo-llms engine backend cpu                  # llama.cpp: no acceleration, prebuilt wheel
+outo-llms engine backend rocm --engine vllm   # vLLM ROCm source build
 outo-llms engine install llamacpp
 ```
 

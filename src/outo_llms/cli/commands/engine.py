@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from enum import Enum
 from typing import TYPE_CHECKING
 
 import typer
@@ -18,15 +17,6 @@ if TYPE_CHECKING:
 console = Console()
 
 engine_app = typer.Typer(help="Manage inference engines.", no_args_is_help=True)
-
-
-class BackendChoice(str, Enum):
-    """GPU backends llama.cpp can be built with (cpu = no acceleration)."""
-
-    vulkan = "vulkan"
-    cuda = "cuda"
-    rocm = "rocm"
-    cpu = "cpu"
 
 
 def _manager() -> EngineManager:
@@ -51,8 +41,11 @@ def add_engine(
         "-s",
         help="Package source: 'pypi', a git URL (…git), a wheel URL, or a local path.",
     ),
-    backend: BackendChoice = typer.Option(
-        BackendChoice.vulkan, "--backend", "-b", help="GPU backend (llamacpp only)."
+    backend: str | None = typer.Option(
+        None,
+        "--backend",
+        "-b",
+        help="GPU backend (default: the type's default; validated per engine).",
     ),
 ) -> None:
     """Register a custom engine instance (e.g. a forked runtime)."""
@@ -65,22 +58,29 @@ def add_engine(
         )
         raise typer.Exit(1)
     try:
-        get_adapter(type)
+        adapter = get_adapter(type)
     except ValueError as exc:
         console.print(f"[bold red]error:[/] {exc}")
         raise typer.Exit(1) from exc
+    backend_value = backend if backend is not None else adapter.default_backend
+    if backend_value not in adapter.supported_backends:
+        console.print(
+            f"[bold red]error:[/] engine type '{type}' does not support backend "
+            f"'{backend_value}' (supported: {', '.join(adapter.supported_backends)})."
+        )
+        raise typer.Exit(1)
     cfg = config_mod.load_config()
     if engine_id in cfg.engine.engines:
         console.print(f"[bold red]error:[/] engine '{engine_id}' already exists.")
         raise typer.Exit(1)
     cfg.engine.engines[engine_id] = config_mod.EngineInstance(
-        type=type, source=source, backend=backend.value
+        type=type, source=source, backend=backend_value
     )
     config_mod.save_config(cfg)
     consent.log_action("add_engine", f"{engine_id} type={type} source={source}")
     console.print(
         f"[green]engine '{engine_id}' added[/] (type={type}, source={source}, "
-        f"backend={backend.value}). Install it with `outo-llms engine install {engine_id}`."
+        f"backend={backend_value}). Install it with `outo-llms engine install {engine_id}`."
     )
 
 
@@ -90,12 +90,18 @@ def remove_engine(
 ) -> None:
     """Remove a custom engine instance (venv, state files, and registry entry)."""
     from ...core import config as config_mod
+    from ...engines.base import adapter_names
 
+    if engine_id in adapter_names():
+        console.print(
+            f"[bold red]error:[/] '{engine_id}' is a built-in engine and cannot "
+            "be removed."
+        )
+        raise typer.Exit(1)
     cfg = config_mod.load_config()
     if engine_id not in cfg.engine.engines:
         console.print(
-            f"[bold red]error:[/] '{engine_id}' is not a custom engine instance "
-            "(built-in engines cannot be removed)."
+            f"[bold red]error:[/] '{engine_id}' is not a custom engine instance."
         )
         raise typer.Exit(1)
     if cfg.engine.name == engine_id:
@@ -148,6 +154,8 @@ def list_engines() -> None:
             "yes" if name == active else "",
         )
     for instance_id, instance in cfg.engine.engines.items():
+        if instance_id in manager.available():
+            continue  # built-in overrides are shown in the built-in rows above
         table.add_row(
             instance_id, instance.type, instance.source, instance.backend,
             "yes" if manager.is_installed(instance_id) else "no",
@@ -273,7 +281,7 @@ def _offer_backend_deps(
         )
     rc = consent.run_system(
         ["sudo", *_PM_COMMANDS[pm], *packages],
-        reason=f"install the {exc.backend} build toolchain for llama.cpp",
+        reason=f"install the {exc.backend} build toolchain for the engine",
         ask=True,
     )
     if rc != 0:
@@ -296,8 +304,8 @@ def _offer_backend_deps(
 
 @engine_app.command("backend")
 def backend(
-    choice: BackendChoice = typer.Argument(
-        ..., help="GPU backend for llama.cpp: vulkan (default), cuda, rocm, or cpu."
+    choice: str = typer.Argument(
+        ..., help="GPU backend; valid values depend on the engine (see error output)."
     ),
     engine_id: str | None = typer.Option(
         None, "--engine", "-e", help="Instance to change (default: the active engine)."
@@ -305,27 +313,34 @@ def backend(
 ) -> None:
     """Select the GPU backend; re-run `engine install <id>` to rebuild."""
     from ...core import config as config_mod
+    from ...engines.base import get_adapter
 
     manager = _manager()
     cfg = config_mod.load_config()
     target = engine_id if engine_id is not None else manager.current_name()
-    if target in cfg.engine.engines:
-        if cfg.engine.engines[target].backend == choice.value:
-            console.print(f"[green]backend of '{target}' is already '{choice.value}'.[/]")
-            return
-        cfg.engine.engines[target].backend = choice.value
-    else:
-        if target not in manager.available():
-            console.print(f"[bold red]error:[/] unknown engine instance '{target}'.")
-            raise typer.Exit(1)
-        if cfg.engine.backend == choice.value:
-            console.print(f"[green]backend is already '{choice.value}'.[/]")
-            return
-        cfg.engine.backend = choice.value
+    try:
+        instance = config_mod.resolve_instance(cfg, target)
+        adapter = get_adapter(instance.type)
+    except ValueError as exc:
+        console.print(f"[bold red]error:[/] {exc}")
+        raise typer.Exit(1) from exc
+    if choice not in adapter.supported_backends:
+        console.print(
+            f"[bold red]error:[/] engine '{target}' ({instance.type}) does not "
+            f"support backend '{choice}' "
+            f"(supported: {', '.join(adapter.supported_backends)})."
+        )
+        raise typer.Exit(1)
+    if instance.backend == choice:
+        console.print(f"[green]backend of '{target}' is already '{choice}'.[/]")
+        return
+    cfg.engine.engines[target] = config_mod.EngineInstance(
+        type=instance.type, source=instance.source, backend=choice
+    )
     config_mod.save_config(cfg)
-    consent.log_action("engine_backend", f"{target}={choice.value}")
+    consent.log_action("engine_backend", f"{target}={choice}")
     manager.stop(target)
-    console.print(f"[green]backend of '{target}' set to '{choice.value}'.[/]")
+    console.print(f"[green]backend of '{target}' set to '{choice}'.[/]")
     console.print(
         f"re-run `outo-llms engine install {target}` to rebuild with the new backend."
     )

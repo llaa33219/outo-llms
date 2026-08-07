@@ -170,7 +170,7 @@ outo-llms engine install llamacpp-dspark
 outo-llms models add bonsai -k gguf -s prism-ml/Bonsai-27B-gguf --engine llamacpp-dspark
 ```
 
-- Instance fields: `type` (`llamacpp`, `vllm`, or `sglang`, serving semantics), `source`, `backend` (vulkan/cuda/rocm/cpu for llamacpp types).
+- Instance fields: `type` (`llamacpp`, `vllm`, or `sglang`, serving semantics), `source`, `backend` (validated per engine type; see [GPU acceleration](#gpu-acceleration-backends)).
 - **Source kinds.** `pypi` installs the stock packages. A git URL (`https://github.com/org/repo`, optionally `git+…@branch`) is the fork case — and it differs by engine type: for `vllm` it is pip-installed directly (`git+…` refs supported); for `llamacpp` it is cloned and **built with cmake** (`cmake -B build -DGGML_<BACKEND>=on && cmake --build build -j`) and served with the resulting `build/bin/llama-server`, matching how llama.cpp forks are actually distributed. A local path works both ways: a checkout with `CMakeLists.txt` builds with cmake, anything else is pip-installed.
 - Source-built llama.cpp needs `git` and `cmake` on PATH (plus the backend toolchain, offered for install like other builds), keeps a minimal venv with `huggingface-hub` for model downloads, serves GPU backends with `-ngl 99`, and `engine upgrade` becomes `git pull` + recompile.
 - `--engine` on `models add` pins the model; unpinned models use the default engine. Each instance runs as its own process on its own port, so instances can serve different models concurrently.
@@ -179,7 +179,15 @@ outo-llms models add bonsai -k gguf -s prism-ml/Bonsai-27B-gguf --engine llamacp
 
 ## GPU acceleration (backends)
 
-GPU acceleration is the default. llama.cpp is built from source with one of these backends; `cpu` is the opt-out (fast prebuilt wheel, no GPU):
+Each engine declares the backends it can actually run on, and outo-llms enforces the declaration: picking an unsupported backend fails immediately with `engine '<name>' (<type>) does not support backend '<choice>' (supported: ...)` instead of being silently ignored.
+
+| Engine | Supported backends | Default | Non-default backends |
+| --- | --- | --- | --- |
+| llama.cpp | `vulkan`, `cuda`, `rocm`, `cpu` | `vulkan` | Built from source with the backend toolchain |
+| vLLM | `cuda`, `rocm`, `cpu` | `cuda` | `rocm`/`cpu` build vLLM from the upstream git source (`VLLM_TARGET_DEVICE`) |
+| SGLang | `cuda`, `rocm` | `cuda` | `rocm` builds SGLang from the upstream git source |
+
+llama.cpp is built from source with one of these backends; `cpu` is the opt-out (fast prebuilt wheel, no GPU):
 
 | Backend | Default | Build requirement | Notes |
 | --- | --- | --- | --- |
@@ -188,7 +196,7 @@ GPU acceleration is the default. llama.cpp is built from source with one of thes
 | `rocm` | no | ROCm (`hipcc`) | AMD GPUs |
 | `cpu` | no | none | Prebuilt wheel, no acceleration |
 
-Select with `outo-llms engine backend <name>`, then rebuild with `outo-llms engine install llamacpp` (source builds take several minutes). When build tools are missing, install offers to install them for the detected package manager (announced, confirmed, logged) and retries once. Verified package sets per distro:
+Select with `outo-llms engine backend <name> [--engine <id>]`, then rebuild with `outo-llms engine install <id>` (source builds take several minutes). The setting is stored per engine instance, so llama.cpp can stay on `vulkan` while vLLM uses `cuda`. When build tools are missing, install offers to install them for the detected package manager (announced, confirmed, logged) and retries once. Verified package sets per distro:
 
 | Backend | apt (Debian/Ubuntu) | dnf (Fedora) | pacman (Arch) | xbps (Void) | apk (Alpine) |
 | --- | --- | --- | --- | --- | --- |
@@ -198,9 +206,9 @@ Select with `outo-llms engine backend <name>`, then rebuild with `outo-llms engi
 
 Tools installed outside PATH (`/opt/cuda/bin`, `/opt/rocm/bin`) are detected and added to the build PATH automatically. At serve time outo-llms passes `--n_gpu_layers -1` for GPU backends, so all layers offload; `--cpu` mode passes nothing. `outo-llms engine status` shows the active backend.
 
-vLLM is GPU-native by design (CUDA on NVIDIA; ROCm builds exist upstream). It has no Vulkan path; on machines without a supported GPU, use llama.cpp with the `cpu` backend instead.
+vLLM is GPU-native by design. The `cuda` backend installs the PyPI wheels; `rocm` and `cpu` build vLLM from the upstream git source with `VLLM_TARGET_DEVICE` set (cmake and Python headers are preflighted; `rocm` additionally needs `hipcc`). It has no Vulkan path and rejects `vulkan` with the error above; on machines without a supported GPU, use llama.cpp with the `cpu` backend instead.
 
-SGLang is GPU-native and Linux-only. The default attention kernel is FlashInfer. CUDA 13 wheels are installed by default; CUDA 12 hosts need the cu129 index. The adapter has no Vulkan or CPU path; on machines without a compatible NVIDIA GPU, use llama.cpp with the `cpu` backend or vLLM with a supported GPU instead.
+SGLang is GPU-native and Linux-only. The default attention kernel is FlashInfer. The `cuda` backend installs the CUDA 13 wheels by default; CUDA 12 hosts need the cu129 index. The `rocm` backend builds SGLang from the upstream git source (needs `hipcc`). There is no Vulkan or CPU path upstream, so both are rejected with the error above; on machines without a compatible NVIDIA or AMD GPU, use llama.cpp with the `cpu` backend instead.
 
 ## Model downloads
 

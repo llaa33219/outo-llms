@@ -34,10 +34,15 @@ class EngineConfig:
 
 
 _BUILTIN_INSTANCES: dict[str, EngineInstance] = {
-    "llamacpp": EngineInstance(type="llamacpp", source="pypi"),
-    "vllm": EngineInstance(type="vllm", source="pypi"),
-    "sglang": EngineInstance(type="sglang", source="pypi"),
+    "llamacpp": EngineInstance(type="llamacpp", source="pypi", backend="vulkan"),
+    "vllm": EngineInstance(type="vllm", source="pypi", backend="cuda"),
+    "sglang": EngineInstance(type="sglang", source="pypi", backend="cuda"),
 }
+
+
+def builtin_instances() -> dict[str, EngineInstance]:
+    """The built-in engine instances, keyed by name (read-only by convention)."""
+    return _BUILTIN_INSTANCES
 
 
 def resolve_instance(cfg: "Config", name: str) -> EngineInstance:
@@ -48,7 +53,7 @@ def resolve_instance(cfg: "Config", name: str) -> EngineInstance:
     builtin = _BUILTIN_INSTANCES.get(name)
     if builtin is not None:
         return EngineInstance(
-            type=builtin.type, source=builtin.source, backend=cfg.engine.backend
+            type=builtin.type, source=builtin.source, backend=builtin.backend
         )
     raise ValueError(f"unknown engine instance: {name!r}")
 
