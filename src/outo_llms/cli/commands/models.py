@@ -63,14 +63,31 @@ def _pick_gguf(candidates: list[str]) -> str | None:
     return candidates[choice - 1]
 
 
+def _alternative_engine(current: str, kind: str) -> str | None:
+    """First other engine able to serve ``kind``; None when there is none."""
+    from ...engines.base import ModelRef, adapter_names, get_adapter
+
+    probe = ModelRef(name="", source="", kind=kind)
+    for name in adapter_names():
+        if name != current and get_adapter(name).supports(probe):
+            return name
+    return None
+
+
 def _print_kind_guidance(model: ModelRef, exc: KindMismatchError) -> None:
     """Show the exact commands that resolve an engine/kind mismatch."""
     from rich.markup import escape
 
     target = exc.kinds[0] if exc.kinds else "hf"
-    other = "vllm" if exc.engine == "llamacpp" else "llamacpp"
+    other = _alternative_engine(exc.engine, target)
     name = escape(model.name)
     source = escape(model.source)
+    switch = (
+        f"[bold]Or switch the engine instead:[/]\n"
+        f"  outo-llms engine install {other} && outo-llms engine use {other}\n\n"
+        if other is not None
+        else ""
+    )
     console.print(
         Panel(
             f"engine '{exc.engine}' serves '{target}' models only, "
@@ -78,13 +95,12 @@ def _print_kind_guidance(model: ModelRef, exc: KindMismatchError) -> None:
             f"[bold]Re-register with the right kind:[/]\n"
             f"  outo-llms models remove {name}\n"
             f"  outo-llms models add {name} -k {target} -s {source}\n\n"
-            f"[bold]Or switch the engine instead:[/]\n"
-            f"  outo-llms engine install {other} && outo-llms engine use {other}\n\n"
+            f"{switch}"
             "[bold]What the flags mean:[/]\n"
-            "  -k, --kind KIND    model format: 'gguf' for llama.cpp, 'hf' for vLLM\n"
+            "  -k, --kind KIND    model format: 'gguf' for llama.cpp, 'hf' for vLLM/SGLang\n"
             "  -s, --source SRC   Hugging Face repo id or a local .gguf path\n"
             "                     (repo:file picks one file inside the repo)\n"
-            "      --hf REPO      shortcut for HF-format models; implies -k hf (for vLLM)",
+            "      --hf REPO      shortcut for HF-format models; implies -k hf",
             title="kind mismatch - nothing was downloaded",
             border_style="yellow",
         )

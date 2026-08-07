@@ -362,6 +362,16 @@ class EngineManager:
         if not include.is_file():
             raise BackendDepsError("python-build", "Python.h")
 
+    @staticmethod
+    def _sglang_build_check() -> None:
+        """Preflight for source-building SGLang (CUDA toolchain)."""
+        if shutil.which("nvcc") is None and not os.environ.get("CUDA_HOME"):
+            raise RuntimeError(
+                "building SGLang from source needs the CUDA toolkit: "
+                "install nvcc or set CUDA_HOME "
+                "(e.g. export CUDA_HOME=/usr/local/cuda-<version>)"
+            )
+
     def install(
         self, name: str, *, on_event: Callable[[str], None] | None = None
     ) -> None:
@@ -374,6 +384,8 @@ class EngineManager:
         instance = self._instance(name)
         if instance.type == "vllm" and instance.source != "pypi":
             self._vllm_build_check()
+        if instance.type == "sglang" and instance.source != "pypi":
+            self._sglang_build_check()
         running = self._live_pid(name)
         if running is not None:
             consent.announce(

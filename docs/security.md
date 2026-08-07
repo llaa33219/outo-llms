@@ -45,7 +45,7 @@ The `default` workspace is created automatically during signup.
 
 `setup` defaults to `0.0.0.0:443` with HTTPS enabled, so the server is reachable on the network right after a default install. To restrict the API to the local machine, pass `--host 127.0.0.1` (or another loopback address) to `setup`. With a public host the server is reachable by any host that can route to the listening port and any client with a valid `outo_sk_` key can call it. There is no built-in rate limit or IP allow list. Use an external reverse proxy or a host firewall for those controls if you need them.
 
-The engine processes always bind to `127.0.0.1`. Their ports (`8612` by default for llama.cpp, `8613` for vLLM) are not the client API and should not be opened to other machines.
+The engine processes always bind to `127.0.0.1`. Their ports (`8612` by default for llama.cpp, `8613` for vLLM, `8614` for SGLang) are not the client API and should not be opened to other machines.
 
 ## HTTPS
 
@@ -119,7 +119,7 @@ The implementation rule is: any code path that touches the system must go throug
 ## Things outo-llms does not do
 
 * It does not implement authentication for the web GUI assets at `/` or the health endpoint at `/healthz`. Both are open by design: the assets are static files and every `/v1` call the GUI makes still requires a valid session token or API key.
-* It does not implement rate limits, quota enforcement, or per-key rate metering. It only records token usage.
+* It does not implement request-rate limiting or IP allow lists. Per-key and per-workspace **token** budgets are supported (see [Server API](server-api.md#token-limits) and the [`outo-llms limits`](cli.md#outo-llms-limits) commands); use an external reverse proxy for request-rate or IP controls if you need them.
 * It does not encrypt the SQLite database, the configuration file, or the action log. The platform filesystem permissions are the protection. The database holds password hashes (PBKDF2) and session and API-key hashes (SHA-256); none of those are reversible to plaintext.
 * It does not validate the TLS chain of upstream clients.
 * It does not implement automatic API-key rotation. Issue a new key and revoke the old one when you need to rotate.

@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from .. import accounts
 from ..deps import UserDep, openai_error
-from ..schemas import WorkspaceCreate, WorkspaceOut
+from ..schemas import Limits, WorkspaceCreate, WorkspaceOut
 
 router = APIRouter(prefix="/v1/workspaces", tags=["workspaces"])
 
@@ -32,3 +32,27 @@ def list_workspaces(
     return [
         WorkspaceOut.model_validate(ws) for ws in accounts.list_workspaces(ctx.user_id)
     ]
+
+
+@router.patch("/{name}", response_model=WorkspaceOut)
+def update_workspace_limits(
+    name: str,
+    body: Limits,
+    ctx: UserDep,
+) -> WorkspaceOut:
+    """Set or clear token limits on an owned workspace.
+
+    Only the fields present in the request body change; an explicit null
+    clears that period's limit.
+    """
+    for ws in accounts.list_workspaces(ctx.user_id):
+        if ws["name"] != name:
+            continue
+        updates = {field: getattr(body, field) for field in body.model_fields_set}
+        if not updates:
+            raise openai_error(400, "request body must set at least one limit field")
+        accounts.set_workspace_limits(ws["id"], updates)
+        for refreshed in accounts.list_workspaces(ctx.user_id):
+            if refreshed["id"] == ws["id"]:
+                return WorkspaceOut.model_validate(refreshed)
+    raise openai_error(404, f"workspace {name!r} not found")

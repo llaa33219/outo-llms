@@ -27,10 +27,11 @@ Full documentation lives in [`docs/`](docs/index.md).
 
 ## Features
 
-- **Isolated engine virtualenvs.** vLLM and llama.cpp install into their
-  own virtual environments, never into the system interpreter.
-- **Choice of engines.** Bring Hugging Face models through vLLM, or GGUF
-  models through llama.cpp, and switch between them with one command.
+- **Isolated engine virtualenvs.** vLLM, llama.cpp, and SGLang install
+  into their own virtual environments, never into the system interpreter.
+- **Choice of engines.** Bring Hugging Face models through vLLM or
+  SGLang, or GGUF models through llama.cpp, and switch between them with
+  one command.
 - **Accounts with passwords and sessions.** Signup takes a username and
   password, creates a `default` workspace, and returns both an `outo_st_`
   session token (for management, 14-day expiry) and an `outo_sk_` API key
@@ -39,6 +40,15 @@ Full documentation lives in [`docs/`](docs/index.md).
 - **Per-workspace usage metering.** Token usage is recorded by workspace
   and surfaced at `GET /v1/usage`, with an optional `?workspace=` query
   parameter to scope to one workspace.
+- **Per-key and per-workspace token limits.** Set independent token
+  budgets on each API key and each workspace across four periods:
+  `total` (all time), `monthly` (UTC calendar month), `weekly` (ISO
+  week, UTC), and `five_hour` (rolling 5-hour window). Both the key's
+  own limits and its workspace's limits are enforced; exceeding either
+  returns an OpenAI-style 429 error. Configure with
+  `POST /v1/workspaces/{name}/keys`, `PATCH /v1/workspaces/{name}/keys/{key_id}`,
+  `PATCH /v1/workspaces/{name}`, or the `outo-llms limits` command
+  group.
 - **OpenAI-compatible proxy.** `POST /v1/chat/completions`,
   `POST /v1/completions`, and `GET /v1/models` speak the same shapes
   clients already know. API keys authenticate the inference endpoints;
@@ -114,9 +124,11 @@ writes a short summary you can copy into your shell history.
 | `outo-llms models list` | Show every registered model |
 | `outo-llms models remove <name>` | Unregister a model (asks first) |
 | `outo-llms engine list` | List known engines and their installed state |
-| `outo-llms engine use <name>` | Switch the active engine (llamacpp or vllm) |
+| `outo-llms engine use <name>` | Switch the active engine (llamacpp, vllm, or sglang) |
 | `outo-llms engine install [name]` | Install an engine into its isolated virtualenv |
 | `outo-llms engine status` | Show the active engine's runtime status |
+| `outo-llms limits key <user>/<workspace> <key_id> [--set ...] [--clear ...]` | Show or update an API key's token limits |
+| `outo-llms limits workspace <user>/<workspace> [--set ...] [--clear ...]` | Show or update a workspace's token limits |
 | `outo-llms start` | Start the API server in the background |
 | `outo-llms stop` | Stop the background API server |
 | `outo-llms restart` | Restart the API server |
@@ -129,8 +141,8 @@ writes a short summary you can copy into your shell history.
 The outo-llms server (`python -m outo_llms.server`) binds `0.0.0.0:443`
 with HTTPS by default and exposes an OpenAI-compatible API at
 `https://<your-server-ip-or-domain>/`. Engines are internal services that
-bind their own loopback ports (llama.cpp on 8612, vLLM on 8613); clients
-never reach them directly.
+bind their own loopback ports (llama.cpp on 8612, vLLM on 8613, SGLang on
+8614); clients never reach them directly.
 
 When a request hits `POST /v1/chat/completions` or `POST /v1/completions`,
 the server authenticates the caller with the `outo_sk_` API key, looks up

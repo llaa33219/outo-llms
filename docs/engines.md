@@ -1,9 +1,10 @@
 # Engines
 
-outo-llms currently registers two engine adapters:
+outo-llms currently registers three engine adapters:
 
 * `llamacpp`, displayed as llama.cpp through `llama-cpp-python`.
 * `vllm`, displayed as vLLM.
+* `sglang`, displayed as SGLang.
 
 The API server is the only client-facing process. Each engine binds to `127.0.0.1` and is reached through the managed proxy.
 
@@ -13,8 +14,9 @@ The API server is the only client-facing process. Each engine binds to `127.0.0.
 | --- | --- | --- | --- |
 | llama.cpp | CPU-friendly local inference and GGUF models | `gguf` | `8612` |
 | vLLM | GPU-backed inference, Hugging Face models, and higher throughput | `hf` | `8613` |
+| SGLang | GPU-backed inference of Hugging Face models with SGLang's runtime | `hf` | `8614` |
 
-llama.cpp can run on a CPU. vLLM effectively needs a compatible NVIDIA GPU for normal use.
+llama.cpp can run on a CPU. vLLM and SGLang effectively need a compatible NVIDIA GPU for normal use; SGLang targets Linux + NVIDIA GPUs (sm80+ recommended) and ships CUDA 13 wheels by default. Hosts that only have CUDA 12 need the cu129 index per SGLang's installation docs.
 
 The active engine is selected in `config.json`. Setup defaults to `llamacpp`.
 
@@ -31,6 +33,7 @@ For example:
 ```text
 <data-dir>/engines/llamacpp/venv/
 <data-dir>/engines/vllm/venv/
+<data-dir>/engines/sglang/venv/
 ```
 
 `outo-llms engine install` creates the venv with the Python interpreter running the CLI, upgrades pip inside that venv, and installs only the selected adapter requirements there. The existing Python environment is not used as the engine runtime and is not modified by engine package installation.
@@ -39,6 +42,7 @@ The engine requirements are:
 
 * llama.cpp: `llama-cpp-python[server]>=0.2.90`
 * vLLM: `vllm>=0.6`
+* SGLang: `sglang`
 
 Engine processes are detached by the manager, have their output redirected to an engine log, and always bind to loopback. Clients never connect directly to the engine port.
 
@@ -60,12 +64,14 @@ Install a named engine without selecting it:
 
 ```bash
 outo-llms engine install vllm
+outo-llms engine install sglang
 ```
 
 Select an installed engine:
 
 ```bash
 outo-llms engine use vllm
+outo-llms engine use sglang
 ```
 
 `engine use` writes the active engine name to `config.json`. It does not install an engine. The selected engine must already be installed. A request then uses that adapter, provided the registered model kind matches it.
@@ -75,6 +81,30 @@ Inspect both server and active engine state:
 ```bash
 outo-llms engine status
 ```
+
+## SGLang
+
+SGLang is the third built-in adapter. It serves Hugging Face models (kind `hf`) through `python -m sglang.launch_server` running inside the SGLang isolated venv, bound to `127.0.0.1` on a free port starting at `8614`.
+
+Requirements:
+
+* Linux + NVIDIA GPU (sm80+ recommended).
+* Python 3.10+.
+* The `sglang` pip package. The default pip index resolves to CUDA 13 wheels; hosts with only CUDA 12 need the cu129 index per SGLang's installation documentation.
+* FlashInfer is the default attention kernel.
+
+Setup selects SGLang through the wizard, or non-interactively with `--engine sglang`:
+
+```bash
+outo-llms setup --engine sglang --yes
+outo-llms engine install sglang
+outo-llms engine use sglang
+outo-llms models add qwen \
+  --source 'Qwen/Qwen2.5-1.5B-Instruct' \
+  --kind hf
+```
+
+SGLang does not support GGUF models. Register GGUF with llama.cpp instead. The SGLang upstream server exposes `/v1/chat/completions`, `/v1/completions`, and `/v1/models` with the same usage fields and `stream_options.include_usage` semantics as vLLM, so the proxy and the engine manager's `/v1/models` readiness probe work unchanged.
 
 ## Model source formats
 
@@ -112,6 +142,18 @@ outo-llms models add tinyllama \
   --kind hf
 ```
 
+### SGLang and Hugging Face
+
+SGLang supports `kind: "hf"` with the same registration shape as vLLM. The source is a Hugging Face repository id and is passed to `sglang.launch_server` as `--model-path`.
+
+```bash
+outo-llms models add tinyllama \
+  --source 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' \
+  --kind hf
+```
+
+GGUF is not supported by the SGLang adapter. Use llama.cpp for GGUF.
+
 ## Engine instances (custom runtimes and forks)
 
 Some models only run on forked runtimes (a patched llama.cpp, a custom vLLM). Beyond the two built-in engines, you can register **engine instances** — each with its own isolated virtualenv, state files, and port, so several runtime variants coexist and models can be pinned to the one they need.
@@ -128,7 +170,7 @@ outo-llms engine install llamacpp-dspark
 outo-llms models add bonsai -k gguf -s prism-ml/Bonsai-27B-gguf --engine llamacpp-dspark
 ```
 
-- Instance fields: `type` (`llamacpp` or `vllm` — serving semantics), `source`, `backend` (vulkan/cuda/rocm/cpu for llamacpp types).
+- Instance fields: `type` (`llamacpp`, `vllm`, or `sglang`, serving semantics), `source`, `backend` (vulkan/cuda/rocm/cpu for llamacpp types).
 - **Source kinds.** `pypi` installs the stock packages. A git URL (`https://github.com/org/repo`, optionally `git+…@branch`) is the fork case — and it differs by engine type: for `vllm` it is pip-installed directly (`git+…` refs supported); for `llamacpp` it is cloned and **built with cmake** (`cmake -B build -DGGML_<BACKEND>=on && cmake --build build -j`) and served with the resulting `build/bin/llama-server`, matching how llama.cpp forks are actually distributed. A local path works both ways: a checkout with `CMakeLists.txt` builds with cmake, anything else is pip-installed.
 - Source-built llama.cpp needs `git` and `cmake` on PATH (plus the backend toolchain, offered for install like other builds), keeps a minimal venv with `huggingface-hub` for model downloads, serves GPU backends with `-ngl 99`, and `engine upgrade` becomes `git pull` + recompile.
 - `--engine` on `models add` pins the model; unpinned models use the default engine. Each instance runs as its own process on its own port, so instances can serve different models concurrently.
@@ -157,6 +199,8 @@ Select with `outo-llms engine backend <name>`, then rebuild with `outo-llms engi
 Tools installed outside PATH (`/opt/cuda/bin`, `/opt/rocm/bin`) are detected and added to the build PATH automatically. At serve time outo-llms passes `--n_gpu_layers -1` for GPU backends, so all layers offload; `--cpu` mode passes nothing. `outo-llms engine status` shows the active backend.
 
 vLLM is GPU-native by design (CUDA on NVIDIA; ROCm builds exist upstream). It has no Vulkan path; on machines without a supported GPU, use llama.cpp with the `cpu` backend instead.
+
+SGLang is GPU-native and Linux-only. The default attention kernel is FlashInfer. CUDA 13 wheels are installed by default; CUDA 12 hosts need the cu129 index. The adapter has no Vulkan or CPU path; on machines without a compatible NVIDIA GPU, use llama.cpp with the `cpu` backend or vLLM with a supported GPU instead.
 
 ## Model downloads
 
@@ -195,6 +239,8 @@ llama.cpp is started as `python -m llama_cpp.server` with `--host 127.0.0.1`, an
 
 vLLM is started as `python -m vllm.entrypoints.openai.api_server` with `--host 127.0.0.1`, an available port starting at `8613`, and `--model <source>`.
 
+SGLang is started as `python -m sglang.launch_server` with `--host 127.0.0.1`, an available port starting at `8614`, and `--model-path <source>`.
+
 Any strings in `engine.extra_args` from `config.json` are appended to the selected engine's command line after the model arguments. The engine adapter does not interpret these arguments.
 
 ## One model at a time
@@ -220,6 +266,6 @@ The engine output log is:
 <data-dir>/logs/engine-<name>.log
 ```
 
-For example, llama.cpp writes to `logs/engine-llamacpp.log`. If an engine exits during startup or does not become ready, the CLI and proxy report this log path.
+For example, llama.cpp writes to `logs/engine-llamacpp.log`, vLLM to `logs/engine-vllm.log`, and SGLang to `logs/engine-sglang.log`. If an engine exits during startup or does not become ready, the CLI and proxy report this log path.
 
 The [configuration reference](configuration.md) documents `engine.name` and `engine.extra_args`. The [architecture guide](architecture.md) explains how the manager fits into request handling.

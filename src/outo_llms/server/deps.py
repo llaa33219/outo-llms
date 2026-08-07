@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
 
-from . import accounts
+from . import accounts, limits
 
 
 def openai_error(
@@ -20,7 +20,12 @@ def openai_error(
 
 
 def require_workspace(request: Request) -> accounts.WorkspaceContext:
-    """Authenticate via ``Authorization: Bearer <key>`` -> workspace context."""
+    """Authenticate via ``Authorization: Bearer <key>`` -> workspace context.
+
+    Also enforces per-key and per-workspace token limits: inference is the
+    only surface authenticated this way, so every limited request is caught
+    here before the proxy forwards it.
+    """
     header = request.headers.get("Authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
@@ -28,6 +33,14 @@ def require_workspace(request: Request) -> accounts.WorkspaceContext:
     ctx = accounts.verify_key(token.strip())
     if ctx is None:
         raise openai_error(401, "invalid or revoked API key")
+    breach = limits.check_limits(ctx.key_id, ctx.workspace_id)
+    if breach is not None:
+        raise openai_error(
+            429,
+            f"{breach.scope} {breach.period} token limit exceeded "
+            f"({breach.used}/{breach.limit} tokens used)",
+            code="rate_limit_exceeded",
+        )
     return ctx
 
 

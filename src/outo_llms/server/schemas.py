@@ -27,10 +27,24 @@ class WorkspaceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
+class Limits(BaseModel):
+    """Token limits per period; a null field means unlimited.
+
+    In PATCH bodies, omitted fields stay unchanged and explicit nulls
+    clear the limit (detected via ``model_fields_set``).
+    """
+
+    total: int | None = Field(default=None, ge=1)
+    monthly: int | None = Field(default=None, ge=1)
+    weekly: int | None = Field(default=None, ge=1)
+    five_hour: int | None = Field(default=None, ge=1)
+
+
 class WorkspaceOut(BaseModel):
     id: int
     name: str
     created_at: str
+    limits: Limits
 
 
 class LoginResponse(BaseModel):
@@ -47,6 +61,7 @@ class PasswordChange(BaseModel):
 
 class KeyCreate(BaseModel):
     label: str = ""
+    limits: Limits | None = None
 
 
 class KeyOut(BaseModel):
@@ -54,6 +69,7 @@ class KeyOut(BaseModel):
     api_key: str
     label: str
     workspace: str
+    limits: Limits
 
 
 class KeyMeta(BaseModel):
@@ -61,6 +77,7 @@ class KeyMeta(BaseModel):
     label: str
     created_at: str
     revoked: bool
+    limits: Limits
 
 
 class ModelUsage(BaseModel):

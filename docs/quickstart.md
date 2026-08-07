@@ -100,6 +100,15 @@ outo-llms models add tinyllama \
   --kind hf
 ```
 
+For an SGLang setup, select `sglang` during setup and register the same way (Linux + NVIDIA GPU, sm80+ recommended):
+
+```bash
+outo-llms setup --engine sglang --yes
+outo-llms models add tinyllama \
+  --source 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' \
+  --kind hf
+```
+
 Use one setup path in a fresh installation. Switching engines later is covered in [Engines](engines.md).
 
 ## 5. Send the first chat completion
@@ -118,7 +127,7 @@ curl -ks "$BASE_URL/v1/chat/completions" \
   }'
 ```
 
-The engine starts on demand. llama.cpp listens internally on port `8612` by default. The client should continue to use the managed API server at the base URL above.
+The engine starts on demand. llama.cpp listens internally on port `8612` by default (vLLM on `8613`, SGLang on `8614`). The client should continue to use the managed API server at the base URL above.
 
 ## 6. Inspect usage
 

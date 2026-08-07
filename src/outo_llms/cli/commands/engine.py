@@ -43,7 +43,7 @@ _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 def add_engine(
     engine_id: str = typer.Argument(..., help="Name for the new engine instance."),
     type: str = typer.Option(
-        ..., "--type", "-t", help="Runtime family: 'llamacpp' or 'vllm'."
+        ..., "--type", "-t", help="Runtime family: 'llamacpp', 'vllm', or 'sglang'."
     ),
     source: str = typer.Option(
         "pypi",
@@ -95,7 +95,7 @@ def remove_engine(
     if engine_id not in cfg.engine.engines:
         console.print(
             f"[bold red]error:[/] '{engine_id}' is not a custom engine instance "
-            "(built-ins llamacpp/vllm cannot be removed)."
+            "(built-in engines cannot be removed)."
         )
         raise typer.Exit(1)
     if cfg.engine.name == engine_id:
@@ -158,7 +158,7 @@ def list_engines() -> None:
 
 @engine_app.command("use")
 def use(
-    name: str = typer.Argument(..., help="Engine to make active (llamacpp or vllm)."),
+    name: str = typer.Argument(..., help="Engine to make active (llamacpp, vllm, or sglang)."),
 ) -> None:
     """Select the active engine."""
     try:

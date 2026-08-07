@@ -35,10 +35,10 @@ Which endpoint takes which credential:
 | `POST /v1/account/logout` | yes | no |
 | `POST /v1/account/password` | yes | no |
 | `GET /v1/account/me` | yes | no |
-| `POST /v1/workspaces`, `GET /v1/workspaces` | yes | no |
-| `POST/GET /v1/workspaces/{name}/keys`, `DELETE /v1/keys/{id}` | yes | no |
+| `POST /v1/workspaces`, `GET /v1/workspaces`, `PATCH /v1/workspaces/{name}` | yes | no |
+| `POST/GET /v1/workspaces/{name}/keys`, `PATCH /v1/workspaces/{name}/keys/{key_id}`, `DELETE /v1/keys/{id}` | yes | no |
 | `GET /v1/usage` | yes | no |
-| `GET /v1/models` | yes | yes (dual auth) |
+| `GET /v1/models`, `GET /v1/models/{name}` | yes | yes (dual auth) |
 | `POST /v1/chat/completions` | no | yes |
 | `POST /v1/completions` | no | yes |
 
@@ -324,15 +324,21 @@ Response JSON, HTTP `200`:
 {
   "id": 2,
   "name": "experiments",
-  "created_at": "2026-07-18T12:05:00+00:00"
+  "created_at": "2026-07-18T12:05:00+00:00",
+  "limits": {
+    "total": null,
+    "monthly": null,
+    "weekly": null,
+    "five_hour": null
+  }
 }
 ```
 
-A duplicate workspace name for the same user returns HTTP `409`.
+The `limits` field is the workspace's own token budget; a new workspace starts with every period unset. See [Token limits](#token-limits). A duplicate workspace name for the same user returns HTTP `409`.
 
 ### `GET /v1/workspaces`
 
-Lists every workspace owned by the authenticated user.
+Lists every workspace owned by the authenticated user. Each entry includes the workspace's own `limits`.
 
 ```bash
 curl -s "$BASE_URL/v1/workspaces" \
@@ -346,12 +352,24 @@ Response JSON, HTTP `200`:
   {
     "id": 1,
     "name": "default",
-    "created_at": "2026-07-18T12:00:00+00:00"
+    "created_at": "2026-07-18T12:00:00+00:00",
+    "limits": {
+      "total": null,
+      "monthly": null,
+      "weekly": null,
+      "five_hour": null
+    }
   },
   {
     "id": 2,
     "name": "experiments",
-    "created_at": "2026-07-18T12:05:00+00:00"
+    "created_at": "2026-07-18T12:05:00+00:00",
+    "limits": {
+      "total": null,
+      "monthly": null,
+      "weekly": null,
+      "five_hour": null
+    }
   }
 ]
 ```
@@ -371,17 +389,23 @@ Request JSON:
 
 ```json
 {
-  "label": "local development"
+  "label": "local development",
+  "limits": {
+    "total": 100000,
+    "monthly": 50000,
+    "weekly": null,
+    "five_hour": null
+  }
 }
 ```
 
-`label` is optional and defaults to an empty string.
+`label` is optional and defaults to an empty string. `limits` is optional; omit it to create a key with no limits. When present, each entry sets a token budget for one period. An integer (>= 1) sets the limit; an explicit `null` clears that period's limit (treated as unset). Omitted entries stay unset. An unset period is unlimited. See [Token limits](#token-limits) for the full rule set and enforcement behavior.
 
 ```bash
 curl -s -X POST "$BASE_URL/v1/workspaces/experiments/keys" \
   -H "Authorization: Bearer $SESSION_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"label":"local development"}'
+  -d '{"label":"local development","limits":{"total":100000,"monthly":50000}}'
 ```
 
 Response JSON, HTTP `200`:
@@ -391,11 +415,17 @@ Response JSON, HTTP `200`:
   "id": 3,
   "api_key": "outo_sk_<random-value>",
   "label": "local development",
-  "workspace": "experiments"
+  "workspace": "experiments",
+  "limits": {
+    "total": 100000,
+    "monthly": 50000,
+    "weekly": null,
+    "five_hour": null
+  }
 }
 ```
 
-The plaintext key is returned once. A key for a workspace the authenticated user does not own returns HTTP `404`.
+The plaintext key is returned once. The `limits` field echoes the value that was persisted (omitted fields appear as `null`). A key for a workspace the authenticated user does not own returns HTTP `404`.
 
 ### `GET /v1/workspaces/{name}/keys`
 
@@ -414,10 +444,18 @@ Response JSON, HTTP `200`:
     "id": 1,
     "label": "local development",
     "created_at": "2026-07-18T12:06:00+00:00",
-    "revoked": false
+    "revoked": false,
+    "limits": {
+      "total": 100000,
+      "monthly": 50000,
+      "weekly": null,
+      "five_hour": null
+    }
   }
 ]
 ```
+
+The `limits` field is the key's own token budget. A period with a `null` value is unset (unlimited). See [Token limits](#token-limits).
 
 ### `DELETE /v1/keys/{key_id}`
 
@@ -437,6 +475,123 @@ Response JSON, HTTP `200`:
 ```
 
 A key that is not owned by the user, or does not exist, returns HTTP `404`.
+
+### `PATCH /v1/workspaces/{name}/keys/{key_id}`
+
+Updates an existing key's `label` and/or `limits`. Body fields are independent; omitted fields stay unchanged. Owned-key semantics are the same as `DELETE /v1/keys/{key_id}`.
+
+Request JSON:
+
+```json
+{
+  "label": "renamed",
+  "limits": {
+    "total": 200000,
+    "monthly": null
+  }
+}
+```
+
+`label` is optional. `limits` is optional and applies the same rule as `POST /v1/workspaces/{name}/keys`: an integer (>= 1) sets that period, an explicit `null` clears that period, omitted entries stay unchanged. Omit `limits` entirely to leave every period as it was.
+
+```bash
+curl -s -X PATCH "$BASE_URL/v1/workspaces/experiments/keys/3" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"limits":{"total":200000,"monthly":null}}'
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "id": 3,
+  "label": "local development",
+  "created_at": "2026-07-18T12:06:00+00:00",
+  "revoked": false,
+  "limits": {
+    "total": 200000,
+    "monthly": null,
+    "weekly": null,
+    "five_hour": null
+  }
+}
+```
+
+A key that is not owned by the user, or does not exist, returns HTTP `404`. Setting a limit value below `1` returns HTTP `400`.
+
+## Token limits
+
+Both an API key and its workspace can carry their own token budgets. Each budget covers four periods:
+
+| Period | Scope |
+| --- | --- |
+| `total` | All recorded usage since the key was created. |
+| `monthly` | The current UTC calendar month. |
+| `weekly` | The current ISO week, UTC. |
+| `five_hour` | The rolling 5-hour window ending at request time. |
+
+For every period, an integer (>= 1) sets the budget and an explicit `null` clears it. A period that is unset is unlimited. Before forwarding a chat or legacy completion, the server computes the period totals for the calling key and for its workspace and rejects the request if either would exceed any set budget. Both checks apply; whichever trips first blocks the request.
+
+Enforcement looks at already-recorded usage, so a single in-flight request may push a counter slightly past a budget; usage is recorded after the response. This matches the best-effort accounting already used for streaming responses.
+
+### `PATCH /v1/workspaces/{name}`
+
+Updates the workspace's `limits`. Body fields are independent; omitted fields stay unchanged.
+
+Request JSON:
+
+```json
+{
+  "limits": {
+    "monthly": 1000000,
+    "five_hour": 50000
+  }
+}
+```
+
+`limits` is optional. When present, the same rule applies: an integer sets that period, an explicit `null` clears it, omitted entries stay unchanged. Omit `limits` entirely to leave every period as it was.
+
+```bash
+curl -s -X PATCH "$BASE_URL/v1/workspaces/experiments" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"limits":{"monthly":1000000,"five_hour":50000}}'
+```
+
+Response JSON, HTTP `200`:
+
+```json
+{
+  "id": 2,
+  "name": "experiments",
+  "created_at": "2026-07-18T12:05:00+00:00",
+  "limits": {
+    "total": null,
+    "monthly": 1000000,
+    "weekly": null,
+    "five_hour": 50000
+  }
+}
+```
+
+A workspace the authenticated user does not own returns HTTP `404`. Setting a limit value below `1` returns HTTP `400`. The `limits` field is also returned on `GET /v1/workspaces`.
+
+### Rate-limit error response
+
+When a request would exceed a set budget, `POST /v1/chat/completions` and `POST /v1/completions` return HTTP `429` with the OpenAI-style error body:
+
+```json
+{
+  "error": {
+    "message": "token limit reached",
+    "type": "invalid_request_error",
+    "code": "rate_limit_exceeded"
+  }
+}
+```
+
+The check runs before the request is forwarded to the engine, so a rejected request never reaches the upstream. The same shape is used for key limits and workspace limits; the message identifies the budget that was hit.
 
 ## Usage
 
@@ -537,6 +692,13 @@ Response JSON, HTTP `200`:
 }
 ```
 
+The `{name}` path segment accepts slashes, so registry names that mirror a Hugging Face repository id (`org/model`) work without URL escaping:
+
+```bash
+curl -s "$BASE_URL/v1/models/org/model" \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
 Unknown model names return `404` with code `model_not_found`.
 
 ## OpenAI-compatible proxy
@@ -582,7 +744,7 @@ The response is the upstream engine response. A typical response has this shape:
 }
 ```
 
-The exact id, text, and token counts come from the engine. A missing `model` returns HTTP `400`. An unregistered model returns HTTP `404` with code `model_not_found`. If the active engine is not installed or cannot start the selected model, the proxy returns HTTP `502`.
+The exact id, text, and token counts come from the engine. A missing `model` returns HTTP `400`. An unregistered model returns HTTP `404` with code `model_not_found`. If the active engine is not installed or cannot start the selected model, the proxy returns HTTP `502`. If a token limit on the calling key or its workspace would be exceeded, the proxy returns HTTP `429` with the OpenAI-style body shown in [Token limits](#token-limits) and never forwards the request.
 
 ### `POST /v1/completions`
 
@@ -599,7 +761,7 @@ curl -s "$BASE_URL/v1/completions" \
   }'
 ```
 
-The response is the upstream completion response, normally with a `choices` array and a `usage` object. Usage recording follows the same non-streaming and streaming rules as chat completions.
+The response is the upstream completion response, normally with a `choices` array and a `usage` object. Usage recording follows the same non-streaming and streaming rules as chat completions. The same HTTP `429` rate-limit error is returned when a token limit on the calling key or its workspace would be exceeded.
 
 ### Streaming
 

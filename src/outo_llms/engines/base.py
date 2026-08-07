@@ -61,7 +61,7 @@ class EngineAdapter(ABC):
 
 
 def adapter_names() -> list[str]:
-    return ["llamacpp", "vllm"]
+    return ["llamacpp", "vllm", "sglang"]
 
 
 def get_adapter(name: str) -> EngineAdapter:
@@ -73,6 +73,10 @@ def get_adapter(name: str) -> EngineAdapter:
         from .vllm import VllmAdapter
 
         return VllmAdapter()
+    if name == "sglang":
+        from .sglang import SglangAdapter
+
+        return SglangAdapter()
     raise ValueError(
         f"unknown engine: {name!r} (available: {', '.join(adapter_names())})"
     )

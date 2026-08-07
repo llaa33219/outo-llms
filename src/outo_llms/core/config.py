@@ -36,6 +36,7 @@ class EngineConfig:
 _BUILTIN_INSTANCES: dict[str, EngineInstance] = {
     "llamacpp": EngineInstance(type="llamacpp", source="pypi"),
     "vllm": EngineInstance(type="vllm", source="pypi"),
+    "sglang": EngineInstance(type="sglang", source="pypi"),
 }
 
 

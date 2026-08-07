@@ -19,7 +19,7 @@ Options:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--engine`, `-e` | `llamacpp` (prompt or `--yes`) | Engine to install: `llamacpp` or `vllm`. |
+| `--engine`, `-e` | `llamacpp` (prompt or `--yes`) | Engine to install: `llamacpp`, `vllm`, or `sglang`. |
 | `--host` | `0.0.0.0` | Interface for the API server. |
 | `--port`, `-p` | `443` | API server port. |
 | `--domain` | auto-detected primary IP, falling back to `localhost` | Domain or IP for the HTTPS certificate. Detected locally without sending any traffic. The certificate's SANs cover `localhost`, `127.0.0.1`, the chosen value, and, when a domain is given, the detected primary IP. The server certificate is regenerated when the domain changes or its remaining validity drops below 30 days; the CA itself is reused. |
@@ -178,7 +178,7 @@ outo-llms models remove tinyllama
 outo-llms engine [COMMAND]
 ```
 
-Manages the two registered engine adapters and the active engine configuration.
+Manages the three registered engine adapters and the active engine configuration.
 
 ### `outo-llms engine list`
 
@@ -186,7 +186,7 @@ Manages the two registered engine adapters and the active engine configuration.
 outo-llms engine list
 ```
 
-Lists `llamacpp` and `vllm`, whether each is installed, and which one is active. It reads engine marker files and the current configuration.
+Lists `llamacpp`, `vllm`, and `sglang`, whether each is installed, and which one is active. It reads engine marker files and the current configuration.
 
 ```bash
 outo-llms engine list
@@ -198,10 +198,11 @@ outo-llms engine list
 outo-llms engine use NAME
 ```
 
-Selects an installed engine as active. `NAME` must be `llamacpp` or `vllm`, and the engine must already have an isolated venv and `INSTALLED` marker.
+Selects an installed engine as active. `NAME` must be `llamacpp`, `vllm`, or `sglang`, and the engine must already have an isolated venv and `INSTALLED` marker.
 
 ```bash
 outo-llms engine use vllm
+outo-llms engine use sglang
 ```
 
 This writes `engine.name` in `config.json` and logs the selection. It does not install the engine. A later inference request uses the selected adapter. See [Engines](engines.md) for model-kind compatibility.
@@ -222,9 +223,12 @@ outo-llms engine install
 
 # Install vLLM without selecting it
 outo-llms engine install vllm
+
+# Install SGLang without selecting it
+outo-llms engine install sglang
 ```
 
-The installed requirements are `llama-cpp-python[server]>=0.2.90` plus `huggingface-hub>=0.24` for llama.cpp and `vllm>=0.6` for vLLM. The command streams pip output and announces the environment and package installation.
+The installed requirements are `llama-cpp-python[server]>=0.2.90` plus `huggingface-hub>=0.24` for llama.cpp, `vllm>=0.6` for vLLM, and `sglang` for SGLang. The command streams pip output and announces the environment and package installation.
 
 ### `outo-llms engine backend`
 
@@ -265,6 +269,63 @@ Shows the active engine's `backend`, `installed`, `running`, `pid`, `model`, `po
 ```bash
 outo-llms engine status
 ```
+
+## `outo-llms limits`
+
+```text
+outo-llms limits [COMMAND]
+```
+
+Shows or updates the token budgets on API keys and workspaces. Limits cover four independently settable periods:
+
+| Period | Scope |
+| --- | --- |
+| `total` | All recorded usage since the key was created. |
+| `monthly` | The current UTC calendar month. |
+| `weekly` | The current ISO week, UTC. |
+| `five_hour` | The rolling 5-hour window ending at request time. |
+
+For each period, an integer (>= 1) sets the budget and an explicit `null` clears it. A period that is unset is unlimited. Both the calling key's own limits and its workspace's limits are enforced by the API server; exceeding either returns an OpenAI-style HTTP `429` before the request is forwarded to the engine. See [Server API](server-api.md#token-limits).
+
+### `outo-llms limits key`
+
+```text
+outo-llms limits key <username>/<workspace> <key_id> [--set period=N ...] [--clear period ...]
+```
+
+Shows the current limits of one API key. With `--set` or `--clear`, updates the key's limits first and then prints the resulting table. The same field-level rule applies: `--set` accepts `period=N` (N is an integer >= 1) and is repeatable; `--clear` accepts a period name and is repeatable. Omitted periods stay unchanged.
+
+```bash
+# Show a key's limits
+outo-llms limits key me/experiments 3
+
+# Set a total budget, clear the monthly budget
+outo-llms limits key me/experiments 3 \
+  --set total=100000 \
+  --clear monthly
+```
+
+A `<username>/<workspace>` reference that does not resolve, or a `key_id` that does not belong to that workspace, exits with an error. The command updates SQLite directly; it does not touch the running server's configuration.
+
+### `outo-llms limits workspace`
+
+```text
+outo-llms limits workspace <username>/<workspace> [--set period=N ...] [--clear period ...]
+```
+
+Shows or updates the workspace's own limits. The `--set` and `--clear` flags follow the same rule as `outo-llms limits key`.
+
+```bash
+# Show a workspace's limits
+outo-llms limits workspace me/experiments
+
+# Cap the workspace at 1M tokens/month and 50K tokens/5h
+outo-llms limits workspace me/experiments \
+  --set monthly=1000000 \
+  --set five_hour=50000
+```
+
+Workspace limits apply to every API key in the workspace, on top of each key's own limits.
 
 ## Server lifecycle commands
 

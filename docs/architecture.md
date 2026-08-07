@@ -123,7 +123,7 @@ shell
         │   ├── /v1/usage, /v1/status
         │   └── /v1/models, /v1/chat/completions, /v1/completions
         ├── EngineManager.ensure_running on demand
-        │   └── python -m llama_cpp.server (or vllm.entrypoints.openai.api_server)
+        │   └── python -m llama_cpp.server (or vllm.entrypoints.openai.api_server, or sglang.launch_server)
         └── EngineManager.download_model invoked by the CLI at registration time
             └── huggingface_hub.snapshot_download inside the active engine's venv
 ```

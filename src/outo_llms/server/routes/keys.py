@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from .. import accounts
 from ..deps import UserDep, openai_error
-from ..schemas import KeyCreate, KeyMeta, KeyOut
+from ..schemas import KeyCreate, KeyMeta, KeyOut, Limits
 
 router = APIRouter(prefix="/v1", tags=["keys"])
 
@@ -29,12 +29,14 @@ def create_key(
     workspace_id = _owned_workspace_id(ctx.user_id, name)
     if workspace_id is None:
         raise openai_error(404, f"workspace {name!r} not found")
-    created = accounts.create_key(workspace_id, body.label)
+    limits = body.limits.model_dump() if body.limits is not None else None
+    created = accounts.create_key(workspace_id, body.label, limits=limits)
     return KeyOut(
         id=int(created["id"]),
         api_key=str(created["api_key"]),
         label=body.label,
         workspace=name,
+        limits=body.limits if body.limits is not None else Limits(),
     )
 
 
@@ -48,6 +50,32 @@ def list_keys(
     if workspace_id is None:
         raise openai_error(404, f"workspace {name!r} not found")
     return [KeyMeta.model_validate(k) for k in accounts.list_keys(workspace_id)]
+
+
+@router.patch("/workspaces/{name}/keys/{key_id}", response_model=KeyMeta)
+def update_key_limits(
+    name: str,
+    key_id: int,
+    body: Limits,
+    ctx: UserDep,
+) -> KeyMeta:
+    """Set or clear token limits on an owned key.
+
+    Only the fields present in the request body change; an explicit null
+    clears that period's limit.
+    """
+    workspace_id = _owned_workspace_id(ctx.user_id, name)
+    if workspace_id is None:
+        raise openai_error(404, f"workspace {name!r} not found")
+    updates = {field: getattr(body, field) for field in body.model_fields_set}
+    if not updates:
+        raise openai_error(400, "request body must set at least one limit field")
+    if not accounts.set_key_limits(key_id, workspace_id, updates):
+        raise openai_error(404, f"key {key_id} not found")
+    for key in accounts.list_keys(workspace_id):
+        if key["id"] == key_id:
+            return KeyMeta.model_validate(key)
+    raise openai_error(404, f"key {key_id} not found")  # pragma: no cover
 
 
 @router.delete("/keys/{key_id}")

@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import typer
 
-from .commands import engine, models, reset, restart, setup, start, status, stop, version
+from .commands import (
+    engine,
+    limits,
+    models,
+    reset,
+    restart,
+    setup,
+    start,
+    status,
+    stop,
+    version,
+)
 
 app = typer.Typer(
     name="outo-llms",
@@ -23,6 +34,7 @@ app.command("version")(version.version)
 
 app.add_typer(models.models_app, name="models")
 app.add_typer(engine.engine_app, name="engine")
+app.add_typer(limits.limits_app, name="limits")
 
 
 def main() -> None:

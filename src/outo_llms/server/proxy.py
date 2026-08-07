@@ -43,7 +43,7 @@ def list_models(ctx: SessionOrWorkspaceDep) -> dict[str, object]:
     }
 
 
-@router.get("/models/{name}")
+@router.get("/models/{name:path}")
 def model_detail(name: str, ctx: SessionOrWorkspaceDep) -> dict[str, object]:
     """Registry detail for one model, used by the web UI's model page."""
     for row in registry.list_models():
@@ -101,6 +101,7 @@ def _record_nonstream_usage(
         model,
         int(usage_data.get("prompt_tokens") or 0),
         int(usage_data.get("completion_tokens") or 0),
+        key_id=ctx.key_id,
     )
 
 
@@ -118,7 +119,6 @@ async def _forward_nonstream(
         raise openai_error(502, "engine returned an invalid response") from exc
     _record_nonstream_usage(ctx, model, data)
     return JSONResponse(content=data, status_code=upstream.status_code)
-
 
 async def _stream_with_accounting(
     client: httpx.AsyncClient,
@@ -156,6 +156,7 @@ async def _stream_with_accounting(
                 model,
                 int(final_usage.get("prompt_tokens") or 0),
                 int(final_usage.get("completion_tokens") or 0),
+                key_id=ctx.key_id,
             )
     except Exception:  # sanctioned: accounting must never break the stream
         pass

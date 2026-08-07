@@ -7,6 +7,13 @@
   const SIGN_IN_MIGRATION_NOTICE = "Sign-in changed: please log in with your username and password (API keys are now only for inference).";
   const BLP_ANIM_DURATION = 100;
   const BLP_STAGGER_STEP = 40;
+  const LIMIT_PERIODS = ["total", "monthly", "weekly", "five_hour"];
+  const LIMIT_LABELS = {
+    total: "Total",
+    monthly: "Monthly",
+    weekly: "Weekly",
+    five_hour: "5-hour",
+  };
   const migratedLegacyKey = removeLegacyApiKey();
   const elements = {
     tilingSpace: document.getElementById("tiling-space"),
@@ -80,7 +87,7 @@
   // re-triggering animations on every render.
   const toastElements = new Map(); // id -> { element, isNew, isExiting }
   const profileMenuRendered = { open: false, hasContent: false, element: null };
-  const modalRendered = { kind: null, secret: null, element: null };
+  const modalRendered = { kind: null, identity: "", element: null };
   let firstMountHandled = false;
 
   class ApiError extends Error {
@@ -292,6 +299,105 @@
     return message || fallback;
   }
 
+  function extractLimitValue(limits, period) {
+    if (!isObject(limits)) {
+      return null;
+    }
+    const value = limits[period];
+    return typeof value === "number" && Number.isFinite(value) && value >= 1 ? value : null;
+  }
+
+  function normalizeLimits(limits) {
+    const result = {};
+    LIMIT_PERIODS.forEach((period) => {
+      result[period] = extractLimitValue(limits, period);
+    });
+    return result;
+  }
+
+  function renderLimitChips(limits, emptyText = "No limits set") {
+    const wrap = node("div", "limit-chips");
+    const set = LIMIT_PERIODS.filter((period) => extractLimitValue(limits, period) !== null);
+    if (!set.length) {
+      wrap.append(node("span", "muted-copy limit-chips__empty", emptyText));
+      return wrap;
+    }
+    set.forEach((period) => {
+      const value = extractLimitValue(limits, period);
+      const chip = node("span", "limit-chip");
+      chip.append(
+        node("span", "limit-chip__label", LIMIT_LABELS[period]),
+        node("span", "limit-chip__value", formatNumber(value)),
+      );
+      wrap.append(chip);
+    });
+    return wrap;
+  }
+
+  function limitsField(idPrefix, currentLimits) {
+    const fieldset = node("fieldset", "limits-fieldset");
+    LIMIT_PERIODS.forEach((period) => {
+      const checkboxId = `${idPrefix}-${period}-enable`;
+      const inputId = `${idPrefix}-${period}-value`;
+      const current = extractLimitValue(currentLimits, period);
+
+      const checkbox = node("input", "limits-fieldset__checkbox");
+      setAttributes(checkbox, {
+        type: "checkbox",
+        id: checkboxId,
+        name: checkboxId,
+      });
+      if (current !== null) {
+        checkbox.checked = true;
+      }
+
+      const label = node("label", "limits-fieldset__period");
+      setAttributes(label, { for: checkboxId });
+      label.append(node("span", "", LIMIT_LABELS[period]));
+
+      const input = node("input", "text-input limits-fieldset__input");
+      setAttributes(input, {
+        type: "number",
+        id: inputId,
+        name: inputId,
+        min: "1",
+        step: "1",
+        inputmode: "numeric",
+        placeholder: current === null ? "Empty = clear" : String(current),
+      });
+      if (current !== null) {
+        input.value = String(current);
+      }
+
+      const row = node("div", "limits-fieldset__row");
+      row.append(checkbox, label, input);
+      fieldset.append(row);
+    });
+    return fieldset;
+  }
+
+  function collectLimitsFromForm(form, idPrefix) {
+    const result = {};
+    LIMIT_PERIODS.forEach((period) => {
+      const checkbox = form.elements[`${idPrefix}-${period}-enable`];
+      if (!checkbox || !checkbox.checked) {
+        return;
+      }
+      const input = form.elements[`${idPrefix}-${period}-value`];
+      const raw = input && typeof input.value === "string" ? input.value.trim() : "";
+      if (raw === "") {
+        result[period] = null;
+      } else {
+        const num = Number(raw);
+        if (!Number.isFinite(num) || !Number.isInteger(num) || num < 1) {
+          throw new Error(`Enter a whole number >= 1 for the ${LIMIT_LABELS[period]} limit.`);
+        }
+        result[period] = num;
+      }
+    });
+    return result;
+  }
+
   async function readJson(response) {
     if (response.status === 204) {
       return null;
@@ -412,6 +518,7 @@
         id: workspace.id,
         name: safeString(workspace.name, ""),
         created_at: safeString(workspace.created_at, ""),
+        limits: normalizeLimits(workspace.limits),
       }));
     state.user = {
       user_id: isObject(payload) ? payload.user_id : null,
@@ -854,8 +961,24 @@
     const copy = node("div");
     copy.append(node("p", "eyebrow", "WORKSPACE"), node("h2", "workspace-detail__title", selected.name), node("p", "muted-copy", `Created ${formatDate(selected.created_at)}`));
     header.append(copy);
-    detail.append(header, renderKeysCard(selected.name), renderUsageCard());
+    detail.append(header, renderWorkspaceLimitsCard(selected), renderKeysCard(selected.name), renderUsageCard());
     return detail;
+  }
+
+  function renderWorkspaceLimitsCard(workspace) {
+    const card = node("div", "blp-window card workspace-limits-card");
+    const heading = node("div", "card-heading");
+    const headingCopy = node("div");
+    headingCopy.append(
+      node("p", "eyebrow", "QUOTAS"),
+      node("h3", "card-title", "Workspace token limits"),
+      node("p", "card-description", "Tokens counted across every inference call in this workspace. Unset periods are unlimited."),
+    );
+    const edit = actionButton("Edit limits", "edit-workspace-limits", "button button--ghost button--small");
+    setAttributes(edit, { "data-workspace-name": workspace.name });
+    heading.append(headingCopy, edit);
+    card.append(heading, renderLimitChips(workspace.limits, "No workspace limits set"));
+    return card;
   }
 
   function renderKeysCard(workspaceName) {
@@ -894,7 +1017,7 @@
     table.append(node("caption", "sr-only", "Workspace inference API keys"));
     const head = node("thead");
     const row = node("tr");
-    ["Label", "Created", "Status", ""].forEach((label) => row.append(node("th", "", label)));
+    ["Label", "Created", "Status", "Limits", ""].forEach((label) => row.append(node("th", "", label)));
     head.append(row);
     const body = node("tbody");
     keys.forEach((key) => {
@@ -916,15 +1039,26 @@
       } else {
         keyCell.append(node("span", "muted-copy key-copy-note", "Shown once at creation. Lost it? Revoke and recreate."));
       }
+      const limitsCell = node("td", "key-limits-cell");
+      limitsCell.append(renderLimitChips(isObject(key) ? key.limits : null, "—"));
       const actionCell = node("td", "table-actions");
+      const actionRow = node("div", "table-actions__row");
       if (!revoked) {
+        const edit = actionButton("Edit limits", "edit-key-limits", "button button--ghost button--small");
+        setAttributes(edit, {
+          "data-key-id": id,
+          "data-workspace-name": state.selectedWorkspaceName,
+          "aria-label": `Edit limits for ${label}`,
+        });
+        actionRow.append(edit);
         const revoke = actionButton("Revoke", "revoke-key", "button button--danger-ghost button--small");
         setAttributes(revoke, { "data-key-id": id, "data-workspace-name": state.selectedWorkspaceName });
-        actionCell.append(revoke);
+        actionRow.append(revoke);
       } else {
-        actionCell.append(node("span", "muted-copy", "\u2014"));
+        actionRow.append(node("span", "muted-copy", "\u2014"));
       }
-      item.append(keyCell, node("td", "", formatDate(isObject(key) ? key.created_at : "")), node("td", "", status), actionCell);
+      actionCell.append(actionRow);
+      item.append(keyCell, node("td", "", formatDate(isObject(key) ? key.created_at : "")), node("td", "", status), limitsCell, actionCell);
       body.append(item);
     });
     table.append(head, body);
@@ -933,12 +1067,15 @@
   }
 
   function createKeyForm(workspaceName) {
-    const form = node("form", "inline-form");
+    const form = node("form", "stack-form");
     setAttributes(form, { "data-form": "create-key", novalidate: "" });
-    const field = formField("key-label", "New inference key label", "Optional", "text", false, 120);
-    const submit = node("button", "button button--ghost", state.busyAction === "create-key" ? "Issuing\u2026" : "Create inference key");
+    const heading = node("div", "form-heading", "Create inference key");
+    const field = formField("key-label", "Label", "Optional", "text", false, 120);
+    const limitsHeading = node("p", "limits-heading", "Token limits (optional)");
+    const limits = limitsField("key-limit", null);
+    const submit = node("button", "button button--primary button--full", state.busyAction === "create-key" ? "Issuing\u2026" : "Create inference key");
     setAttributes(submit, { type: "submit", disabled: state.busyAction === "create-key" ? "" : null, "data-workspace-name": workspaceName });
-    form.append(field, submit);
+    form.append(heading, field, limitsHeading, limits, submit);
     if (state.keyFormError) {
       form.append(formError(state.keyFormError));
     }
@@ -1455,6 +1592,22 @@
     return button;
   }
 
+  function modalIdentity(modal) {
+    if (!modal) {
+      return "";
+    }
+    if (modal.kind === "secret") {
+      return String(modal.secret || "");
+    }
+    if (modal.kind === "key-limits") {
+      return `${modal.workspaceName || ""}::${modal.keyId ?? ""}`;
+    }
+    if (modal.kind === "workspace-limits") {
+      return String(modal.workspaceName || "");
+    }
+    return "";
+  }
+
   function renderModal() {
     const root = elements.modalRoot;
     document.body.classList.toggle("modal-open", Boolean(state.modal));
@@ -1463,7 +1616,7 @@
       root.setAttribute("aria-hidden", "true");
       if (modalRendered.kind) {
         modalRendered.kind = null;
-        modalRendered.secret = null;
+        modalRendered.identity = "";
         const panel = root.querySelector(".modal-backdrop");
         if (panel) {
           panel.classList.remove("blp-enter");
@@ -1492,8 +1645,8 @@
     // Decide whether to rebuild the modal content.
     const modal = state.modal;
     const sameKind = modalRendered.kind === modal.kind;
-    const sameSecret = modal.kind !== "secret" || modalRendered.secret === modal.secret;
-    if (!(sameKind && sameSecret)) {
+    const sameIdentity = modalRendered.identity === modalIdentity(modal);
+    if (!(sameKind && sameIdentity)) {
       clear(root);
       const backdrop = node("div", "modal-backdrop");
       const panel = node("section", "modal-panel");
@@ -1502,26 +1655,30 @@
       // a content-level action (the secret modal exposes a "Done" button).
       if (modal.kind === "secret") {
         renderSecretModal(panel);
+      } else if (modal.kind === "workspace-limits" || modal.kind === "key-limits") {
+        renderLimitsModal(panel);
       } else {
         renderAuthModal(panel, modal.kind);
       }
       backdrop.append(panel);
       root.append(backdrop);
       modalRendered.kind = modal.kind;
-      modalRendered.secret = modal.kind === "secret" ? modal.secret : null;
+      modalRendered.identity = modalIdentity(modal);
       modalRendered.element = backdrop;
       // requestAnimationFrame so the animation starts after the element is in the DOM.
       requestAnimationFrame(() => {
         backdrop.classList.add("blp-enter");
       });
     } else {
-      // Same modal, same secret: update busy state and error in place.
+      // Same modal, same content identity: update busy state and error in place.
       const panel = root.querySelector(".modal-panel");
       if (panel) {
         // Re-render content for busy/error updates.
         clear(panel);
         if (modal.kind === "secret") {
           renderSecretModal(panel);
+        } else if (modal.kind === "workspace-limits" || modal.kind === "key-limits") {
+          renderLimitsModal(panel);
         } else {
           renderAuthModal(panel, modal.kind);
         }
@@ -1573,6 +1730,36 @@
     panel.append(warning, secret, actions);
   }
 
+  function renderLimitsModal(panel) {
+    const isKey = state.modal.kind === "key-limits";
+    const eyebrow = isKey ? "KEY LIMITS" : "WORKSPACE LIMITS";
+    const targetLabel = isKey ? state.modal.keyLabel : state.modal.workspaceName;
+    const title = isKey ? `Edit limits — ${targetLabel || "Unlabeled key"}` : `Edit workspace limits — ${targetLabel}`;
+    const description = "Uncheck a period to leave it unchanged. Check a period and leave the input blank to clear its limit. Check a period and enter a positive integer to set it.";
+    panel.append(
+      node("p", "eyebrow", eyebrow),
+      setAttributes(node("h2", "modal-title", title), { id: "modal-title" }),
+      node("p", "modal-description", description),
+    );
+    const form = node("form", "modal-form limits-form");
+    setAttributes(form, {
+      "data-form": isKey ? "edit-key-limits" : "edit-workspace-limits",
+      novalidate: "",
+    });
+    const idPrefix = isKey ? "edit-key-limit" : "edit-ws-limit";
+    form.append(limitsField(idPrefix, state.modal.currentLimits));
+    const actions = node("div", "modal-actions");
+    const cancel = actionButton("Cancel", "close-modal", "button button--ghost");
+    const submit = node("button", "button button--primary", state.modal.busy ? "Saving\u2026" : "Save limits");
+    setAttributes(submit, { type: "submit", disabled: state.modal.busy ? "" : null });
+    actions.append(cancel, submit);
+    form.append(actions);
+    if (state.modal.error) {
+      form.append(formError(state.modal.error));
+    }
+    panel.append(form);
+  }
+
   function openAuthModal(kind) {
     state.profileOpen = false;
     state.authNotice = "";
@@ -1585,6 +1772,42 @@
 
   function openSecretModal(title, description, secret) {
     state.modal = { kind: "secret", title, description, secret };
+    render();
+  }
+
+  function openWorkspaceLimitsModal(workspaceName) {
+    const workspace = state.workspaces.find((entry) => entry.name === workspaceName);
+    if (!workspace) {
+      return;
+    }
+    state.profileOpen = false;
+    state.modal = {
+      kind: "workspace-limits",
+      workspaceName,
+      currentLimits: normalizeLimits(workspace.limits),
+      busy: false,
+      error: null,
+    };
+    render();
+  }
+
+  function openKeyLimitsModal(workspaceName, keyId) {
+    const keys = Array.isArray(state.workspaceData.keys) ? state.workspaceData.keys : [];
+    const numericKeyId = typeof keyId === "number" ? keyId : Number(keyId);
+    const key = keys.find((entry) => Number(entry?.id) === numericKeyId);
+    if (!key) {
+      return;
+    }
+    state.profileOpen = false;
+    state.modal = {
+      kind: "key-limits",
+      workspaceName,
+      keyId: numericKeyId,
+      keyLabel: safeString(key.label, "Unlabeled key"),
+      currentLimits: normalizeLimits(key.limits),
+      busy: false,
+      error: null,
+    };
     render();
   }
 
@@ -1833,14 +2056,27 @@
     }
     const formData = new FormData(form);
     const label = String(formData.get("key-label") || "").trim();
+    let limits;
+    try {
+      limits = collectLimitsFromForm(form, "key-limit");
+    } catch (error) {
+      state.busyAction = "";
+      state.keyFormError = new ApiError(error.message);
+      render();
+      return;
+    }
     const knownKeyIds = listedInferenceKeyIds(state.workspaceData.keys);
     state.busyAction = "create-key";
     state.keyFormError = null;
     render();
     try {
+      const body = { label };
+      if (Object.keys(limits).length > 0) {
+        body.limits = limits;
+      }
       const payload = await apiRequest(`/v1/workspaces/${encodeURIComponent(workspaceName)}/keys`, {
         method: "POST",
-        body: JSON.stringify({ label }),
+        body: JSON.stringify(body),
       });
       const apiKey = isObject(payload) && typeof payload.api_key === "string" ? payload.api_key : "";
       if (!apiKey) {
@@ -1894,6 +2130,105 @@
       state.busyAction = "";
       state.keyFormError = error instanceof ApiError ? error : new ApiError("server unreachable", 0, true);
       render();
+    }
+  }
+
+  async function submitWorkspaceLimits(form) {
+    if (!state.modal || state.modal.kind !== "workspace-limits") {
+      return;
+    }
+    let limits;
+    try {
+      limits = collectLimitsFromForm(form, "edit-ws-limit");
+    } catch (error) {
+      state.modal.busy = false;
+      state.modal.error = new ApiError(error.message);
+      render();
+      return;
+    }
+    if (Object.keys(limits).length === 0) {
+      state.modal.busy = false;
+      state.modal.error = new ApiError("Select at least one limit to change.");
+      render();
+      return;
+    }
+    state.modal.busy = true;
+    state.modal.error = null;
+    render();
+    try {
+      const payload = await apiRequest(
+        `/v1/workspaces/${encodeURIComponent(state.modal.workspaceName)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(limits),
+        },
+      );
+      state.modal = null;
+      showNotice("Workspace limits updated.", "success");
+      if (isObject(payload) && typeof payload.name === "string") {
+        state.workspaces = state.workspaces.map((entry) =>
+          entry.name === payload.name
+            ? { ...entry, limits: normalizeLimits(payload.limits) }
+            : entry
+        );
+      }
+      render();
+    } catch (error) {
+      if (state.modal) {
+        state.modal.busy = false;
+        state.modal.error = error instanceof ApiError ? error : new ApiError("server unreachable", 0, true);
+        render();
+      }
+    }
+  }
+
+  async function submitKeyLimits(form) {
+    if (!state.modal || state.modal.kind !== "key-limits") {
+      return;
+    }
+    let limits;
+    try {
+      limits = collectLimitsFromForm(form, "edit-key-limit");
+    } catch (error) {
+      state.modal.busy = false;
+      state.modal.error = new ApiError(error.message);
+      render();
+      return;
+    }
+    if (Object.keys(limits).length === 0) {
+      state.modal.busy = false;
+      state.modal.error = new ApiError("Select at least one limit to change.");
+      render();
+      return;
+    }
+    state.modal.busy = true;
+    state.modal.error = null;
+    render();
+    try {
+      const payload = await apiRequest(
+        `/v1/workspaces/${encodeURIComponent(state.modal.workspaceName)}/keys/${encodeURIComponent(String(state.modal.keyId))}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(limits),
+        },
+      );
+      const updatedKeyId = isObject(payload) ? payload.id : null;
+      if (Array.isArray(state.workspaceData.keys) && updatedKeyId !== null && updatedKeyId !== undefined) {
+        state.workspaceData.keys = state.workspaceData.keys.map((entry) =>
+          Number(entry?.id) === Number(updatedKeyId)
+            ? { ...entry, limits: normalizeLimits(payload.limits) }
+            : entry
+        );
+      }
+      state.modal = null;
+      showNotice("Key limits updated.", "success");
+      render();
+    } catch (error) {
+      if (state.modal) {
+        state.modal.busy = false;
+        state.modal.error = error instanceof ApiError ? error : new ApiError("server unreachable", 0, true);
+        render();
+      }
     }
   }
 
@@ -2092,6 +2427,14 @@
         }
       } else if (action === "revoke-key") {
         revokeKey(actionElement);
+      } else if (action === "edit-workspace-limits") {
+        openWorkspaceLimitsModal(actionElement.dataset.workspaceName || state.selectedWorkspaceName);
+      } else if (action === "edit-key-limits") {
+        const keyId = actionElement.dataset.keyId;
+        const numericKeyId = keyId === undefined || keyId === "" ? NaN : Number(keyId);
+        if (Number.isFinite(numericKeyId)) {
+          openKeyLimitsModal(actionElement.dataset.workspaceName || state.selectedWorkspaceName, numericKeyId);
+        }
       }
       return;
     }
@@ -2118,6 +2461,10 @@
       submitWorkspace(form);
     } else if (formName === "create-key") {
       submitKey(form);
+    } else if (formName === "edit-workspace-limits") {
+      submitWorkspaceLimits(form);
+    } else if (formName === "edit-key-limits") {
+      submitKeyLimits(form);
     }
   }
 

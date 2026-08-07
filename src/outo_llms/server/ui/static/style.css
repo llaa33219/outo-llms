@@ -586,7 +586,8 @@ input:focus-visible,
 .profile-workspaces-card,
 .context-card,
 .live-card,
-.model-detail-card {
+.model-detail-card,
+.workspace-limits-card {
   padding: var(--space-4);
 }
 
@@ -1187,6 +1188,125 @@ input:focus-visible,
 .keys-card > .state-card,
 .usage-card > .state-card {
   min-height: 140px;
+}
+
+/* ============================================================
+   LIMIT CHIPS — compact period/value pairs used in tables and
+   the workspace-limits card. Reuses the existing pill token
+   language (border-radius: 999px, --font-size-xs, --space-2
+   padding) so the limits surface matches the rest of the GUI.
+   ============================================================ */
+
+.limit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.limit-chip__label {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.limit-chip__value {
+  color: var(--text);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.limit-chips__empty {
+  margin-top: var(--space-3);
+}
+
+.key-limits-cell {
+  vertical-align: middle;
+}
+
+/* ============================================================
+   TABLE ACTIONS — wrap to multiple buttons when a row gets
+   more than one (e.g. Edit limits + Revoke on a key).
+   ============================================================ */
+
+.table-actions__row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+/* ============================================================
+   LIMITS FIELD — token limit editor shared by the key creation
+   form and the edit-limits modal. Three columns: enable
+   checkbox, period label, numeric input.
+   ============================================================ */
+
+.limits-heading {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.limits-fieldset {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--bg);
+}
+
+.limits-fieldset__row {
+  display: grid;
+  grid-template-columns: auto 1fr minmax(120px, 0.5fr);
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.limits-fieldset__checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.limits-fieldset__period {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.limits-fieldset__input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.limits-form .limits-fieldset {
+  margin-top: var(--space-2);
 }
 
 /* ============================================================

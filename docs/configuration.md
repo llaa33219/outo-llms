@@ -42,7 +42,7 @@ The fields are:
 | `server.port` | integer | `443` | Port where the managed API server listens. |
 | `server.https` | boolean | `true` | Whether Uvicorn serves HTTPS using the generated certificate and key. |
 | `server.domain` | string | `""` | Domain or IP used as the certificate CN/SAN. When empty, the certificate falls back to the auto-detected primary IP (or `localhost` if detection fails). Existing certificates are regenerated when the value changes. |
-| `engine.name` | string | `llamacpp` | Default engine instance id: `llamacpp`, `vllm`, or a custom instance id. |
+| `engine.name` | string | `llamacpp` | Default engine instance id: `llamacpp`, `vllm`, `sglang`, or a custom instance id. |
 | `engine.backend` | string | `vulkan` | GPU backend for the built-in llamacpp instance: `vulkan`, `cuda`, `rocm`, or `cpu`. |
 | `engine.engines` | object | `{}` | Custom engine instances, keyed by id: `{"my-fork": {"type": "llamacpp", "source": "https://…/fork.git", "backend": "vulkan"}}`. Managed with `engine add`/`engine remove`. |
 | `engine.extra_args` | array of strings | `[]` | Extra command-line arguments appended to the active engine's serve command. |
@@ -95,7 +95,13 @@ The paths module is the single source of truth for filesystem locations:
 │   │   └── INSTALLED
 │   ├── vllm.pid
 │   ├── vllm.port
-│   └── vllm.model
+│   ├── vllm.model
+│   ├── sglang/
+│   │   ├── venv/
+│   │   └── INSTALLED
+│   ├── sglang.pid
+│   ├── sglang.port
+│   └── sglang.model
 ├── models/
 ├── certs/
 │   ├── ca.crt
@@ -106,6 +112,7 @@ The paths module is the single source of truth for filesystem locations:
     ├── server.log
     ├── engine-llamacpp.log
     ├── engine-vllm.log
+    ├── engine-sglang.log
     └── actions.log
 ```
 

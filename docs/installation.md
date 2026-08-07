@@ -53,6 +53,8 @@ GPU acceleration is enabled by default through the `vulkan` backend, which compi
 
 vLLM is intended for GPU-backed deployments and effectively requires a compatible NVIDIA GPU for normal use. It serves Hugging Face model repositories and is the better choice when you need higher throughput from supported GPU hardware.
 
+SGLang is the third engine, also GPU-backed, and Linux + NVIDIA GPUs (sm80+ recommended) are the supported targets. It serves Hugging Face model repositories through SGLang's runtime. The default pip wheels are CUDA 13; hosts with CUDA 12 need the cu129 index per SGLang's installation docs.
+
 Engine installation happens in a separate virtual environment under the outo-llms data directory. It does not modify the environment where you installed the CLI. Engine installation can still download a large number of packages, so allow time and disk space for it.
 
 ## Access to gated Hugging Face models

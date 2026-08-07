@@ -33,13 +33,16 @@ class EngineChoice(str, Enum):
 
     llamacpp = "llamacpp"
     vllm = "vllm"
+    sglang = "sglang"
 
 
 def _prompt_engine() -> EngineChoice:
     """Ask which engine to install, defaulting to llama.cpp."""
     while True:
         answer = (
-            console.input("[bold]?[/] inference engine [dim](llamacpp/vllm)[/] [llamacpp] ")
+            console.input(
+                "[bold]?[/] inference engine [dim](llamacpp/vllm/sglang)[/] [llamacpp] "
+            )
             .strip()
             .lower()
         )
@@ -48,7 +51,7 @@ def _prompt_engine() -> EngineChoice:
         try:
             return EngineChoice(answer)
         except ValueError:
-            console.print("[red]please enter 'llamacpp' or 'vllm'.[/]")
+            console.print("[red]please enter 'llamacpp', 'vllm', or 'sglang'.[/]")
 
 
 def _engine_requirements(engine: EngineChoice) -> str:

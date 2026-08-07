@@ -32,10 +32,29 @@ _PASSWORD_MAX_LENGTH = 256
 _USERNAME_MAX_LENGTH = 64
 
 
+class LimitsDict(TypedDict):
+    """Token limits for one key or workspace; None means unlimited."""
+
+    total: int | None
+    monthly: int | None
+    weekly: int | None
+    five_hour: int | None
+
+
+# API/JSON limit name -> database column (fixed map, never user input).
+_LIMIT_COLUMNS = {
+    "total": "limit_total",
+    "monthly": "limit_monthly",
+    "weekly": "limit_weekly",
+    "five_hour": "limit_5h",
+}
+
+
 class WorkspaceDict(TypedDict):
     id: int
     name: str
     created_at: str
+    limits: LimitsDict
 
 
 class KeyDict(TypedDict):
@@ -43,6 +62,7 @@ class KeyDict(TypedDict):
     label: str
     created_at: str
     revoked: bool
+    limits: LimitsDict
 
 
 @dataclass(frozen=True)
@@ -53,6 +73,7 @@ class WorkspaceContext:
     workspace_name: str
     user_id: int
     username: str
+    key_id: int
 
 
 @dataclass(frozen=True)
@@ -257,6 +278,30 @@ def _default_workspace_id(user_id: int) -> int:
     return int(row["id"])
 
 
+def _limits_from_row(row: sqlite3.Row) -> LimitsDict:
+    return LimitsDict(
+        total=row["limit_total"],
+        monthly=row["limit_monthly"],
+        weekly=row["limit_weekly"],
+        five_hour=row["limit_5h"],
+    )
+
+
+def _apply_limit_updates(
+    table: str, row_id: int, updates: dict[str, int | None], *, id_column: str = "id"
+) -> bool:
+    """Write limit columns from API-named updates; False when the row is missing."""
+    assignments = ", ".join(f"{_LIMIT_COLUMNS[name]} = ?" for name in updates)
+    values = [updates[name] for name in updates]
+    db.init_db()
+    with db.get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE {table} SET {assignments} WHERE {id_column} = ?",
+            (*values, row_id),
+        )
+    return cur.rowcount > 0
+
+
 def create_workspace(user_id: int, name: str) -> WorkspaceDict:
     """Create a workspace for ``user_id``; duplicates raise ``ValueError``."""
     db.init_db()
@@ -271,13 +316,17 @@ def create_workspace(user_id: int, name: str) -> WorkspaceDict:
                 f"workspace {name!r} already exists for this user"
             ) from exc
         row = conn.execute(
-            "SELECT id, name, created_at FROM workspaces WHERE id = ?",
+            "SELECT id, name, created_at, limit_total, limit_monthly,"
+            " limit_weekly, limit_5h FROM workspaces WHERE id = ?",
             (cur.lastrowid,),
         ).fetchone()
     if row is None:  # pragma: no cover - we just inserted it
         raise RuntimeError("failed to create workspace")
     return WorkspaceDict(
-        id=int(row["id"]), name=row["name"], created_at=row["created_at"]
+        id=int(row["id"]),
+        name=row["name"],
+        created_at=row["created_at"],
+        limits=_limits_from_row(row),
     )
 
 
@@ -286,26 +335,48 @@ def list_workspaces(user_id: int) -> list[WorkspaceDict]:
     db.init_db()
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at FROM workspaces WHERE user_id = ? ORDER BY id",
+            "SELECT id, name, created_at, limit_total, limit_monthly,"
+            " limit_weekly, limit_5h FROM workspaces WHERE user_id = ? ORDER BY id",
             (user_id,),
         ).fetchall()
     return [
         WorkspaceDict(
-            id=int(row["id"]), name=row["name"], created_at=row["created_at"]
+            id=int(row["id"]),
+            name=row["name"],
+            created_at=row["created_at"],
+            limits=_limits_from_row(row),
         )
         for row in rows
     ]
 
 
-def create_key(workspace_id: int, label: str = "") -> dict[str, object]:
+def set_workspace_limits(workspace_id: int, updates: dict[str, int | None]) -> bool:
+    """Set or clear (None) workspace limit fields; False if no such workspace."""
+    return _apply_limit_updates("workspaces", workspace_id, updates)
+
+
+def create_key(
+    workspace_id: int, label: str = "", limits: LimitsDict | None = None
+) -> dict[str, object]:
     """Issue a new API key for a workspace; returns id and plaintext once."""
     db.init_db()
     plaintext = _KEY_PREFIX + secrets.token_urlsafe(24)
+    values = limits if limits is not None else {}
     with db.get_conn() as conn:
         cursor = conn.execute(
-            "INSERT INTO api_keys (workspace_id, key_hash, label, created_at)"
-            " VALUES (?, ?, ?, ?)",
-            (workspace_id, _hash_key(plaintext), label, db.utcnow()),
+            "INSERT INTO api_keys (workspace_id, key_hash, label, created_at,"
+            " limit_total, limit_monthly, limit_weekly, limit_5h)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                workspace_id,
+                _hash_key(plaintext),
+                label,
+                db.utcnow(),
+                values.get("total"),
+                values.get("monthly"),
+                values.get("weekly"),
+                values.get("five_hour"),
+            ),
         )
     return {"id": cursor.lastrowid, "api_key": plaintext}
 
@@ -315,7 +386,8 @@ def list_keys(workspace_id: int) -> list[KeyDict]:
     db.init_db()
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, label, created_at, revoked FROM api_keys"
+            "SELECT id, label, created_at, revoked, limit_total, limit_monthly,"
+            " limit_weekly, limit_5h FROM api_keys"
             " WHERE workspace_id = ? ORDER BY id",
             (workspace_id,),
         ).fetchall()
@@ -325,9 +397,25 @@ def list_keys(workspace_id: int) -> list[KeyDict]:
             label=row["label"],
             created_at=row["created_at"],
             revoked=bool(row["revoked"]),
+            limits=_limits_from_row(row),
         )
         for row in rows
     ]
+
+
+def set_key_limits(
+    key_id: int, workspace_id: int, updates: dict[str, int | None]
+) -> bool:
+    """Set or clear (None) key limit fields, scoped to the owning workspace."""
+    assignments = ", ".join(f"{_LIMIT_COLUMNS[name]} = ?" for name in updates)
+    values = [updates[name] for name in updates]
+    db.init_db()
+    with db.get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE api_keys SET {assignments} WHERE id = ? AND workspace_id = ?",
+            (*values, key_id, workspace_id),
+        )
+    return cur.rowcount > 0
 
 
 def revoke_key(key_id: int, workspace_id: int) -> bool:
@@ -346,7 +434,8 @@ def verify_key(key: str) -> WorkspaceContext | None:
     db.init_db()
     with db.get_conn() as conn:
         row = conn.execute(
-            "SELECT k.workspace_id, w.name AS workspace_name, w.user_id, u.username"
+            "SELECT k.id AS key_id, k.workspace_id, w.name AS workspace_name,"
+            " w.user_id, u.username"
             " FROM api_keys k"
             " JOIN workspaces w ON w.id = k.workspace_id"
             " JOIN users u ON u.id = w.user_id"
@@ -360,4 +449,5 @@ def verify_key(key: str) -> WorkspaceContext | None:
         workspace_name=row["workspace_name"],
         user_id=int(row["user_id"]),
         username=row["username"],
+        key_id=int(row["key_id"]),
     )

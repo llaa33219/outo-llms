@@ -1,19 +1,19 @@
 # outo-llms documentation
 
-outo-llms deploys local language models behind a managed, OpenAI-compatible API server. The server adds password-protected accounts with session tokens, workspace-scoped API keys for inference, model registration with immediate weight download, and per-workspace usage metering around either llama.cpp or vLLM.
+outo-llms deploys local language models behind a managed, OpenAI-compatible API server. The server adds password-protected accounts with session tokens, workspace-scoped API keys for inference, model registration with immediate weight download, per-workspace usage metering, and per-key plus per-workspace token limits around llama.cpp, vLLM, or SGLang.
 
 The inference engine runs in an isolated virtual environment managed by outo-llms. It does not install engine packages into the Python environment that contains the `outo-llms` command.
 
 ## 60-second orientation
 
 1. Install the package with `uv tool install outo-llms` (or `pipx`/`pip`).
-2. Run `outo-llms setup`. Choose an engine, server address, HTTPS setting, and firewall behavior. Setup creates the data directories, database, isolated engine environment, and background server.
+2. Run `outo-llms setup`. Choose an engine (`llamacpp`, `vllm`, or `sglang`), server address, HTTPS setting, and firewall behavior. Setup creates the data directories, database, isolated engine environment, and background server.
 3. Open the web GUI at `/` and use `Profile` > `Sign up` to create an account with a username and password. Save the `outo_st_` session token and `outo_sk_` API key when they are displayed once. API users can create an account with `POST /v1/account/signup {"username","password"}` instead.
 4. Register a model with `outo-llms models add ...`. The command downloads the weights into the shared Hugging Face cache immediately, so the first inference request does not have to.
 5. Send an authenticated request to `POST /v1/chat/completions` or `POST /v1/completions` with the API key. The engine starts when the first request needs it; the weights are already cached.
-6. Inspect metering at `GET /v1/usage` with the session token (use `?workspace=<name>` to scope to one workspace), use the full web GUI at `/` for signup and login, read-only model browsing, workspace and API-key management, and server status, or open the interactive API reference at `/docs`.
+6. Inspect metering at `GET /v1/usage` with the session token (use `?workspace=<name>` to scope to one workspace), set token budgets with `outo-llms limits key` and `outo-llms limits workspace` (or the matching `PATCH` endpoints), use the full web GUI at `/` for signup and login, read-only model browsing, workspace and API-key management, and server status, or open the interactive API reference at `/docs`.
 
-By default the server listens on `0.0.0.0:443` with HTTPS, so the web GUI is at `https://<your-server-ip-or-domain>/` with no port in the URL. llama.cpp uses port `8612` by default and vLLM uses port `8613` by default. Those engine ports are internal and are not the client API.
+By default the server listens on `0.0.0.0:443` with HTTPS, so the web GUI is at `https://<your-server-ip-or-domain>/` with no port in the URL. llama.cpp uses port `8612` by default, vLLM uses port `8613` by default, and SGLang uses port `8614` by default. Those engine ports are internal and are not the client API.
 
 ## Documentation map
 
@@ -22,7 +22,7 @@ By default the server listens on `0.0.0.0:443` with HTTPS, so the web GUI is at 
 * [Quickstart](quickstart.md) walks through setup, signup, model registration, a first completion, and usage inspection.
 * [CLI reference](cli.md) documents every `outo-llms` command and option.
 * [Server API](server-api.md) documents every HTTP endpoint, authentication rule, payload, and response.
-* [Engines](engines.md) compares llama.cpp and vLLM and explains isolation, model sources, downloads, and lifecycle behavior.
+* [Engines](engines.md) compares llama.cpp, vLLM, and SGLang and explains isolation, model sources, downloads, and lifecycle behavior.
 * [Configuration](configuration.md) describes `config.json`, the data directories, state files, and logs.
 * [Security](security.md) covers the credential model (passwords, sessions, API keys), workspace boundaries, network binding, HTTPS, firewall changes, and audit logging.
 * [Architecture](architecture.md) describes the module boundaries, request flow, process model, and extension points.

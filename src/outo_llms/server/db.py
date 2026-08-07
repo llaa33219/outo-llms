@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS workspaces (
     user_id INTEGER NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    limit_total INTEGER,
+    limit_monthly INTEGER,
+    limit_weekly INTEGER,
+    limit_5h INTEGER,
     UNIQUE(user_id, name)
 );
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -31,7 +35,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_hash TEXT UNIQUE NOT NULL,
     label TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
-    revoked INTEGER NOT NULL DEFAULT 0
+    revoked INTEGER NOT NULL DEFAULT 0,
+    limit_total INTEGER,
+    limit_monthly INTEGER,
+    limit_weekly INTEGER,
+    limit_5h INTEGER
 );
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY,
@@ -51,6 +59,7 @@ CREATE TABLE IF NOT EXISTS models (
 CREATE TABLE IF NOT EXISTS usage (
     id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+    key_id INTEGER REFERENCES api_keys(id),
     model TEXT NOT NULL,
     prompt_tokens INTEGER NOT NULL,
     completion_tokens INTEGER NOT NULL,
@@ -58,6 +67,9 @@ CREATE TABLE IF NOT EXISTS usage (
     created_at TEXT NOT NULL
 );
 """
+
+# Token-limit columns shared by api_keys and workspaces (NULL = unlimited).
+LIMIT_COLUMNS = ("limit_total", "limit_monthly", "limit_weekly", "limit_5h")
 
 
 def utcnow() -> str:
@@ -86,6 +98,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
     model_columns = {row["name"] for row in conn.execute("PRAGMA table_info(models)")}
     if "engine" not in model_columns:
         conn.execute("ALTER TABLE models ADD COLUMN engine TEXT")
+    # Token limits (api_keys + workspaces) and per-key attribution (usage).
+    for table in ("api_keys", "workspaces"):
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column in LIMIT_COLUMNS:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER")
+    usage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(usage)")}
+    if "key_id" not in usage_columns:
+        conn.execute(
+            "ALTER TABLE usage ADD COLUMN key_id INTEGER REFERENCES api_keys(id)"
+        )
 
 
 def init_db() -> None:

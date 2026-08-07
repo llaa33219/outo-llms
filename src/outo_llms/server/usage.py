@@ -8,17 +8,22 @@ from . import db
 
 
 def record_usage(
-    workspace_id: int, model: str, prompt_tokens: int, completion_tokens: int
+    workspace_id: int,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    key_id: int | None = None,
 ) -> None:
     """Append one inference request to the usage ledger."""
     db.init_db()
     with db.get_conn() as conn:
         conn.execute(
             "INSERT INTO usage"
-            " (workspace_id, model, prompt_tokens, completion_tokens, total_tokens,"
-            " created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            " (workspace_id, key_id, model, prompt_tokens, completion_tokens,"
+            " total_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
+                key_id,
                 model,
                 prompt_tokens,
                 completion_tokens,
