@@ -192,6 +192,21 @@ async def _forward_nonstream(
         data = upstream.json()
     except ValueError as exc:
         raise api_error(502, "engine returned an invalid response") from exc
+    
+    # Validate Anthropic responses have the expected shape
+    if protocol == "anthropic" and upstream.status_code == 200:
+        if not isinstance(data, dict):
+            raise api_error(
+                502,
+                f"engine returned non-object response: {type(data).__name__}"
+            )
+        # A valid Anthropic response has 'content' (list) or 'type' (error)
+        if "content" not in data and "type" not in data:
+            raise api_error(
+                502,
+                f"engine returned invalid Anthropic response shape: {list(data.keys())}"
+            )
+    
     _record_nonstream_usage(ctx, model, data, protocol)
     return JSONResponse(content=data, status_code=upstream.status_code)
 
