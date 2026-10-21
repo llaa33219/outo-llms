@@ -1,6 +1,6 @@
 # outo-llms documentation
 
-outo-llms deploys local language models behind a managed, OpenAI-compatible API server. The server adds password-protected accounts with session tokens, workspace-scoped API keys for inference, model registration with immediate weight download, per-workspace usage metering, and per-key plus per-workspace token limits around llama.cpp, vLLM, or SGLang.
+outo-llms deploys local language models behind a managed, Anthropic-compatible API server (the Messages API). The server adds password-protected accounts with session tokens, workspace-scoped API keys for inference, model registration with immediate weight download, per-workspace usage metering, and per-key plus per-workspace token limits around llama.cpp, vLLM, or SGLang.
 
 The inference engine runs in an isolated virtual environment managed by outo-llms. It does not install engine packages into the Python environment that contains the `outo-llms` command.
 
@@ -10,7 +10,7 @@ The inference engine runs in an isolated virtual environment managed by outo-llm
 2. Run `outo-llms setup`. Choose an engine (`llamacpp`, `vllm`, or `sglang`), server address, HTTPS setting, and firewall behavior. Setup creates the data directories, database, isolated engine environment, and background server.
 3. Open the web GUI at `/` and use `Profile` > `Sign up` to create an account with a username and password. Save the `outo_st_` session token and `outo_sk_` API key when they are displayed once. API users can create an account with `POST /v1/account/signup {"username","password"}` instead.
 4. Register a model with `outo-llms models add ...`. The command downloads the weights into the shared Hugging Face cache immediately, so the first inference request does not have to.
-5. Send an authenticated request to `POST /v1/chat/completions` or `POST /v1/completions` with the API key. The engine starts when the first request needs it; the weights are already cached.
+5. Send an authenticated request to `POST /v1/messages` with the API key (OpenAI-format clients can use `POST /v1/chat/completions` instead). The engine starts when the first request needs it; the weights are already cached.
 6. Inspect metering at `GET /v1/usage` with the session token (use `?workspace=<name>` to scope to one workspace), set token budgets with `outo-llms limits key` and `outo-llms limits workspace` (or the matching `PATCH` endpoints), use the full web GUI at `/` for signup and login, read-only model browsing, workspace and API-key management, and server status, or open the interactive API reference at `/docs`.
 
 By default the server listens on `0.0.0.0:443` with HTTPS, so the web GUI is at `https://<your-server-ip-or-domain>/` with no port in the URL. llama.cpp uses port `8612` by default, vLLM uses port `8613` by default, and SGLang uses port `8614` by default. Those engine ports are internal and are not the client API.

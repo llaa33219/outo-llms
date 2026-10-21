@@ -7,10 +7,10 @@ venv, managed by :class:`outo_llms.engines.manager.EngineManager`.
 
 SGLang targets Linux + NVIDIA GPUs (sm80+ recommended, FlashInfer is the
 default attention kernel; CUDA_HOME must be set for source builds of the
-kernel packages). Its server exposes ``/v1/chat/completions``,
-``/v1/completions`` and ``/v1/models`` with the same usage fields and
-``stream_options.include_usage`` semantics as vLLM, so the proxy and the
-manager's ``/v1/models`` readiness probe work unchanged.
+kernel packages). Its server exposes the Anthropic Messages API (``/v1/messages``, with
+``usage.input_tokens``/``usage.output_tokens``) next to the OpenAI
+endpoints and ``/v1/models``, so the proxy and the manager's ``/v1/models``
+readiness probe work unchanged.
 """
 
 from __future__ import annotations

@@ -1,4 +1,8 @@
-"""Shared FastAPI dependencies and OpenAI-style error helpers."""
+"""Shared FastAPI dependencies and error helpers."""
+
+# Error bodies keep the ``{"error": {"message", "type"}}`` shape (the
+# historical OpenAI-style envelope) so every API failure - management or
+# inference - has one consistent wire format.
 
 from __future__ import annotations
 
@@ -9,10 +13,10 @@ from fastapi import Depends, HTTPException, Request
 from . import accounts, limits
 
 
-def openai_error(
+def api_error(
     status_code: int, message: str, *, code: str | None = None
 ) -> HTTPException:
-    """Build an HTTPException whose detail follows the OpenAI error shape."""
+    """Build an HTTPException whose detail follows the API error shape."""
     error: dict[str, str] = {"message": message, "type": "invalid_request_error"}
     if code is not None:
         error["code"] = code
@@ -29,13 +33,13 @@ def require_workspace(request: Request) -> accounts.WorkspaceContext:
     header = request.headers.get("Authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
-        raise openai_error(401, "missing or malformed Authorization header")
+        raise api_error(401, "missing or malformed Authorization header")
     ctx = accounts.verify_key(token.strip())
     if ctx is None:
-        raise openai_error(401, "invalid or revoked API key")
+        raise api_error(401, "invalid or revoked API key")
     breach = limits.check_limits(ctx.key_id, ctx.workspace_id)
     if breach is not None:
-        raise openai_error(
+        raise api_error(
             429,
             f"{breach.scope} {breach.period} token limit exceeded "
             f"({breach.used}/{breach.limit} tokens used)",
@@ -52,7 +56,7 @@ def bearer_token(request: Request) -> str:
     header = request.headers.get("Authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
-        raise openai_error(401, "missing or malformed Authorization header")
+        raise api_error(401, "missing or malformed Authorization header")
     return token.strip()
 
 
@@ -60,7 +64,7 @@ def require_user(request: Request) -> accounts.UserSession:
     """Authenticate via ``Authorization: Bearer <session_token>`` -> user session."""
     session = accounts.verify_session(bearer_token(request))
     if session is None:
-        raise openai_error(401, "invalid or expired session token")
+        raise api_error(401, "invalid or expired session token")
     return session
 
 
@@ -75,11 +79,11 @@ def require_session_or_workspace(
     if token.startswith("outo_st_"):
         session = accounts.verify_session(token)
         if session is None:
-            raise openai_error(401, "invalid or expired session token")
+            raise api_error(401, "invalid or expired session token")
         return session
     ctx = accounts.verify_key(token)
     if ctx is None:
-        raise openai_error(401, "invalid or revoked API key")
+        raise api_error(401, "invalid or revoked API key")
     return ctx
 
 

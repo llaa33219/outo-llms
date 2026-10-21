@@ -4,7 +4,7 @@
 
 # outo-llms
 
-Deploy local LLMs behind your own managed, OpenAI-compatible API server.
+Deploy local LLMs behind your own managed, Anthropic-compatible API server.
 
 vLLM or llama.cpp runs in an **isolated environment** managed by outo-llms,
 kept apart from the Python environments you already have. Users sign up with a
@@ -12,7 +12,7 @@ username and password, receive both an `outo_st_` session token for account
 management and an `outo_sk_` API key for inference, organize work into
 workspaces, and every request is metered per workspace. Open the built-in web
 GUI to sign up or log in, manage workspaces and API keys, and inspect server
-status, then point your OpenAI SDK at the URL for an HTTP call.
+status, then point your Anthropic SDK (or curl) at the URL for an HTTP call.
 
 Full documentation lives in [`docs/`](docs/index.md).
 
@@ -45,14 +45,17 @@ Full documentation lives in [`docs/`](docs/index.md).
   `total` (all time), `monthly` (UTC calendar month), `weekly` (ISO
   week, UTC), and `five_hour` (rolling 5-hour window). Both the key's
   own limits and its workspace's limits are enforced; exceeding either
-  returns an OpenAI-style 429 error. Configure with
+  returns a 429 error. Configure with
   `POST /v1/workspaces/{name}/keys`, `PATCH /v1/workspaces/{name}/keys/{key_id}`,
   `PATCH /v1/workspaces/{name}`, or the `outo-llms limits` command
   group.
-- **OpenAI-compatible proxy.** `POST /v1/chat/completions`,
-  `POST /v1/completions`, and `GET /v1/models` speak the same shapes
-  clients already know. API keys authenticate the inference endpoints;
-  session tokens authenticate management and usage.
+- **Anthropic-compatible proxy.** `POST /v1/messages` (plus
+  `POST /v1/messages/count_tokens`) is the primary inference surface,
+  speaking the Anthropic Messages API shape; the OpenAI endpoints
+  `POST /v1/chat/completions` and `POST /v1/completions` are kept for
+  compatibility, and `GET /v1/models` lists registered models. API keys
+  authenticate the inference endpoints; session tokens authenticate
+  management and usage.
 - **Optional HTTPS.** A local outo-llms CA is created under `data/certs/`
   and signs the server certificate. Setup can install the CA into the
   system trust store so clients trust it without warnings.
@@ -100,10 +103,10 @@ curl -s -X POST https://<your-server-ip-or-domain>/v1/account/signup \
   -H 'Content-Type: application/json' \
   -d '{"username": "me", "password": "..."}' # returns api_key + session_token + default workspace
 outo-llms models add tinyllama               # register a model and download its weights
-curl -s https://<your-server-ip-or-domain>/v1/chat/completions \
+curl -s https://<your-server-ip-or-domain>/v1/messages \
   -H "Authorization: Bearer outo_sk_..." \
   -H 'Content-Type: application/json' \
-  -d '{"model": "tinyllama", "messages": [{"role": "user", "content": "hi"}]}'
+  -d '{"model": "tinyllama", "max_tokens": 1024, "messages": [{"role": "user", "content": "hi"}]}'
 curl -s https://<your-server-ip-or-domain>/v1/usage \
   -H "Authorization: Bearer outo_st_..."    # per-workspace token accounting (session token)
 ```
@@ -139,12 +142,12 @@ writes a short summary you can copy into your shell history.
 ## How it works
 
 The outo-llms server (`python -m outo_llms.server`) binds `0.0.0.0:443`
-with HTTPS by default and exposes an OpenAI-compatible API at
+with HTTPS by default and exposes an Anthropic-compatible API at
 `https://<your-server-ip-or-domain>/`. Engines are internal services that
 bind their own loopback ports (llama.cpp on 8612, vLLM on 8613, SGLang on
 8614); clients never reach them directly.
 
-When a request hits `POST /v1/chat/completions` or `POST /v1/completions`,
+When a request hits `POST /v1/messages` (or the OpenAI compatibility endpoints),
 the server authenticates the caller with the `outo_sk_` API key, looks up
 the requested model in the registry, asks the engine manager to ensure the
 right engine is running with that model, then forwards the request. The

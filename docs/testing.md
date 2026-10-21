@@ -37,16 +37,16 @@ BASE_URL="https://203.0.113.10"
 * `curl -ks "$BASE_URL/v1/account/me" -H "Authorization: Bearer $SESSION_TOKEN"`.
   * Expected: HTTP `200` with the same `user_id` and `username`, and a `workspaces` array containing one entry for `default`.
 * `curl -ks "$BASE_URL/v1/account/me" -H "Authorization: Bearer $API_KEY"`.
-  * Expected: HTTP `401`. Management endpoints require a session token, not an API key. The body uses the OpenAI-style error shape.
+  * Expected: HTTP `401`. Management endpoints require a session token, not an API key. The body uses the standard error shape.
 * `curl -ks "$BASE_URL/v1/account/me"`.
-  * Expected: HTTP `401`. The body uses the OpenAI-style error shape.
+  * Expected: HTTP `401`. The body uses the standard error shape.
 
 ## Log in and rotate credentials
 
 * `curl -ks -X POST "$BASE_URL/v1/account/login" -H 'Content-Type: application/json' -d '{"username":"me","password":"correct horse battery staple"}'`.
   * Expected: HTTP `200` with a fresh `session_token` (different from the signup one), the `user_id`, the `username`, and the `workspaces` array. Save it: `SESSION_TOKEN="outo_st_<paste-the-new-token>"`.
 * `curl -ks -X POST "$BASE_URL/v1/account/login" -H 'Content-Type: application/json' -d '{"username":"me","password":"wrong password"}'`.
-  * Expected: HTTP `401`. The body is the generic OpenAI-style error, not a different message for wrong-username vs wrong-password.
+  * Expected: HTTP `401`. The body is the generic error body, not a different message for wrong-username vs wrong-password.
 * `curl -ks -X POST "$BASE_URL/v1/account/logout" -H "Authorization: Bearer $SESSION_TOKEN"`.
   * Expected: HTTP `200` with `{"revoked": true}`.
 * `curl -ks "$BASE_URL/v1/account/me" -H "Authorization: Bearer $SESSION_TOKEN"`.
@@ -64,8 +64,10 @@ BASE_URL="https://203.0.113.10"
   * Expected: registration succeeds without downloading. `outo-llms models download tinyllama` later fetches the file into the same cache; rerunning `download` is idempotent.
 * `outo-llms models list`.
   * Expected: a table with one row showing `tinyllama`, `gguf`, the source, and a timestamp.
-* `curl -ks -X POST "$BASE_URL/v1/chat/completions" -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' -d '{"model":"tinyllama","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`.
-  * Expected: HTTP `200`. The body has `choices[0].message.content` with text from the model. Because the weights were pre-downloaded at registration, the first request only waits for llama.cpp to start the engine.
+* `curl -ks -X POST "$BASE_URL/v1/messages" -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' -d '{"model":"tinyllama","max_tokens":1024,"messages":[{"role":"user","content":"Say hello in one sentence."}]}'`.
+  * Expected: HTTP `200`. The body has `content[0].text` with text from the model and a `usage` object with `input_tokens`/`output_tokens`. Because the weights were pre-downloaded at registration, the first request only waits for llama.cpp to start the engine.
+* `curl -ks -X POST "$BASE_URL/v1/chat/completions" -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' -d '{"model":"tinyllama","messages":[{"role":"user","content":"Say hello in one sentence."}]}'` (OpenAI compatibility surface).
+  * Expected: HTTP `200` with the OpenAI-shaped response (`choices[0].message.content`). Both protocol families share the same auth, limits, and usage accounting.
 * `curl -ks "$BASE_URL/v1/models" -H "Authorization: Bearer $API_KEY"`.
   * Expected: HTTP `200` with `object: "list"` and a `data` array containing one entry for `tinyllama`.
 * `curl -ks "$BASE_URL/v1/models" -H "Authorization: Bearer $SESSION_TOKEN"`.
@@ -78,7 +80,7 @@ BASE_URL="https://203.0.113.10"
 * `curl -ks "$BASE_URL/v1/usage?workspace=default" -H "Authorization: Bearer $SESSION_TOKEN"`.
   * Expected: HTTP `200`. The `workspace` field is `default`. Counts match the request that ran on that workspace.
 * `curl -ks "$BASE_URL/v1/usage?workspace=does-not-exist" -H "Authorization: Bearer $SESSION_TOKEN"`.
-  * Expected: HTTP `404` with the OpenAI-style error shape. The named workspace either does not exist or is not owned by the caller.
+  * Expected: HTTP `404` with the standard error shape. The named workspace either does not exist or is not owned by the caller.
 * Send another completion with a different prompt and re-issue the usage request.
   * Expected: `total_requests` increments and token totals increase.
 

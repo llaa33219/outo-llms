@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .. import accounts, usage
-from ..deps import UserDep, openai_error
+from ..deps import UserDep, api_error
 from ..schemas import UsageSummary
 
 router = APIRouter(prefix="/v1/usage", tags=["usage"])
@@ -24,4 +24,4 @@ def get_usage(ctx: UserDep, workspace: str | None = None) -> UsageSummary:
     for ws in accounts.list_workspaces(ctx.user_id):
         if ws["name"] == workspace:
             return UsageSummary.model_validate(usage.usage_summary(ws["id"]))
-    raise openai_error(404, f"workspace {workspace!r} not found")
+    raise api_error(404, f"workspace {workspace!r} not found")

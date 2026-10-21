@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .. import accounts
-from ..deps import UserDep, openai_error
+from ..deps import UserDep, api_error
 from ..schemas import KeyCreate, KeyMeta, KeyOut, Limits
 
 router = APIRouter(prefix="/v1", tags=["keys"])
@@ -28,7 +28,7 @@ def create_key(
     """Issue a new API key for a workspace the authenticated user owns."""
     workspace_id = _owned_workspace_id(ctx.user_id, name)
     if workspace_id is None:
-        raise openai_error(404, f"workspace {name!r} not found")
+        raise api_error(404, f"workspace {name!r} not found")
     limits = body.limits.model_dump() if body.limits is not None else None
     created = accounts.create_key(workspace_id, body.label, limits=limits)
     return KeyOut(
@@ -48,7 +48,7 @@ def list_keys(
     """List key metadata (never hashes) for an owned workspace."""
     workspace_id = _owned_workspace_id(ctx.user_id, name)
     if workspace_id is None:
-        raise openai_error(404, f"workspace {name!r} not found")
+        raise api_error(404, f"workspace {name!r} not found")
     return [KeyMeta.model_validate(k) for k in accounts.list_keys(workspace_id)]
 
 
@@ -66,16 +66,16 @@ def update_key_limits(
     """
     workspace_id = _owned_workspace_id(ctx.user_id, name)
     if workspace_id is None:
-        raise openai_error(404, f"workspace {name!r} not found")
+        raise api_error(404, f"workspace {name!r} not found")
     updates = {field: getattr(body, field) for field in body.model_fields_set}
     if not updates:
-        raise openai_error(400, "request body must set at least one limit field")
+        raise api_error(400, "request body must set at least one limit field")
     if not accounts.set_key_limits(key_id, workspace_id, updates):
-        raise openai_error(404, f"key {key_id} not found")
+        raise api_error(404, f"key {key_id} not found")
     for key in accounts.list_keys(workspace_id):
         if key["id"] == key_id:
             return KeyMeta.model_validate(key)
-    raise openai_error(404, f"key {key_id} not found")  # pragma: no cover
+    raise api_error(404, f"key {key_id} not found")  # pragma: no cover
 
 
 @router.delete("/keys/{key_id}")
@@ -89,4 +89,4 @@ def revoke_key(
         if any(k["id"] == key_id for k in accounts.list_keys(workspace_id)):
             accounts.revoke_key(key_id, workspace_id)
             return {"revoked": True}
-    raise openai_error(404, f"key {key_id} not found")
+    raise api_error(404, f"key {key_id} not found")

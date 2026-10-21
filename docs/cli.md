@@ -286,7 +286,7 @@ Shows or updates the token budgets on API keys and workspaces. Limits cover four
 | `weekly` | The current ISO week, UTC. |
 | `five_hour` | The rolling 5-hour window ending at request time. |
 
-For each period, an integer (>= 1) sets the budget and an explicit `null` clears it. A period that is unset is unlimited. Both the calling key's own limits and its workspace's limits are enforced by the API server; exceeding either returns an OpenAI-style HTTP `429` before the request is forwarded to the engine. See [Server API](server-api.md#token-limits).
+For each period, an integer (>= 1) sets the budget and an explicit `null` clears it. A period that is unset is unlimited. Both the calling key's own limits and its workspace's limits are enforced by the API server; exceeding either returns an HTTP `429` (standard error shape) before the request is forwarded to the engine. See [Server API](server-api.md#token-limits).
 
 ### `outo-llms limits key`
 

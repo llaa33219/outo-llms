@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "outo-llms"
-version = "0.10.1"
-description = "Deploy local LLMs behind your own managed API server - vLLM or llama.cpp in isolated environments, with API keys, workspaces, and usage tracking."
+version = "0.10.2"
+description = "Deploy local LLMs behind your own managed Anthropic-compatible API server - vLLM, llama.cpp, or SGLang in isolated environments, with API keys, workspaces, and usage tracking."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "outo-llms contributors" }]
-keywords = ["llm", "vllm", "llama.cpp", "inference", "self-hosted", "api-server"]
+keywords = ["llm", "vllm", "llama.cpp", "sglang", "anthropic", "inference", "self-hosted", "api-server"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

@@ -22,7 +22,7 @@ Two Bearer credential types are in play after signup or login:
 | Credential | Prefix | Purpose | Lifetime |
 | --- | --- | --- | --- |
 | Session token | `outo_st_` | Account and workspace management: `me`, `login`, `logout`, `password`, `workspaces`, `workspaces/{name}/keys`, `keys/{id}`, `usage`, `status`. Also accepted by `GET /v1/models`. | 14 days. Stored as a SHA-256 hash; the plaintext is shown only at creation. |
-| API key | `outo_sk_` | Inference on behalf of one workspace: `POST /v1/chat/completions`, `POST /v1/completions`. Also accepted by `GET /v1/models`. | Revoked explicitly; never auto-expires. Stored as a SHA-256 hash. |
+| API key | `outo_sk_` | Inference on behalf of one workspace: `POST /v1/messages`, `POST /v1/messages/count_tokens`, plus the OpenAI compatibility endpoints `POST /v1/chat/completions` and `POST /v1/completions`. Also accepted by `GET /v1/models`. | Revoked explicitly; never auto-expires. Stored as a SHA-256 hash. |
 
 Both are sent in the standard `Authorization: Bearer <value>` header. A missing, malformed, invalid, or revoked credential returns HTTP `401`.
 
@@ -39,12 +39,14 @@ Which endpoint takes which credential:
 | `POST/GET /v1/workspaces/{name}/keys`, `PATCH /v1/workspaces/{name}/keys/{key_id}`, `DELETE /v1/keys/{id}` | yes | no |
 | `GET /v1/usage` | yes | no |
 | `GET /v1/models`, `GET /v1/models/{name}` | yes | yes (dual auth) |
+| `POST /v1/messages` | no | yes |
+| `POST /v1/messages/count_tokens` | no | yes |
 | `POST /v1/chat/completions` | no | yes |
 | `POST /v1/completions` | no | yes |
 
 Account signup also returns both credentials in the response body, so a fresh client can use the `outo_sk_` key for inference and the `outo_st_` token for management in the same shell.
 
-Every error response from the API, including `404`, uses the OpenAI-style shape:
+Every error response produced by outo-llms itself, including `404`, uses this error shape (the historical OpenAI-style envelope):
 
 ```json
 {
@@ -126,7 +128,7 @@ Response JSON, HTTP `200`:
         "user": "luke",
         "workspace": "default",
         "model": "deepseek-v4-flash",
-        "endpoint": "chat/completions",
+        "endpoint": "messages",
         "elapsed_seconds": 8.2
       }
     ]
@@ -377,7 +379,7 @@ Response JSON, HTTP `200`:
 ## API keys
 
 > **API keys are inference-only credentials in 0.3.0.** They authenticate
-> `POST /v1/chat/completions` and `POST /v1/completions` (and `GET /v1/models`)
+> `POST /v1/messages` (and its OpenAI compatibility siblings) plus `GET /v1/models`
 > on behalf of one workspace. They do not authenticate workspace management,
 > usage, account, or status endpoints; those require a session token.
 
@@ -579,7 +581,7 @@ A workspace the authenticated user does not own returns HTTP `404`. Setting a li
 
 ### Rate-limit error response
 
-When a request would exceed a set budget, `POST /v1/chat/completions` and `POST /v1/completions` return HTTP `429` with the OpenAI-style error body:
+When a request would exceed a set budget, the inference endpoints (`POST /v1/messages`, `POST /v1/chat/completions`, `POST /v1/completions`) return HTTP `429` with the standard error body:
 
 ```json
 {
@@ -636,13 +638,13 @@ Response JSON, HTTP `200` (aggregate form):
 
 The `workspace` field echoes the chosen scope, either `all` or the single workspace name.
 
-For non-streaming proxy responses, accounting reads the upstream response's `usage.prompt_tokens` and `usage.completion_tokens` fields. Missing values are treated as zero. For streaming responses, the proxy adds `stream_options.include_usage: true` to the upstream request, forwards the stream, and records usage from the final usage-bearing SSE event when one is returned. Streaming accounting is best effort and never breaks the stream.
+For non-streaming proxy responses, accounting reads the upstream response's usage fields - `usage.input_tokens`/`usage.output_tokens` on the Anthropic surface, `usage.prompt_tokens`/`usage.completion_tokens` on the OpenAI surface - and records them as prompt and completion tokens. Missing values are treated as zero. For streaming responses, the proxy forwards the SSE stream unchanged and reads usage from the stream's usage events (`message_start` + final `message_delta` for Anthropic; the final usage-bearing event for OpenAI, requested via `stream_options.include_usage: true`). Streaming accounting is best effort and never breaks the stream.
 
 ## Models
 
 ### `GET /v1/models`
 
-Lists registered models in the OpenAI `list` shape. This is the registry exposed by outo-llms, not a direct listing from the engine. Accepts either a session Bearer or an API key Bearer, so both GUI and inference clients can call it with the credential they already hold.
+Lists registered models in the OpenAI `list` shape (kept for broad client compatibility; every inference SDK can discover models from it). This is the registry exposed by outo-llms, not a direct listing from the engine. Accepts either a session Bearer or an API key Bearer, so both GUI and inference clients can call it with the credential they already hold.
 
 ```bash
 curl -s "$BASE_URL/v1/models" \
@@ -701,18 +703,21 @@ curl -s "$BASE_URL/v1/models/org/model" \
 
 Unknown model names return `404` with code `model_not_found`.
 
-## OpenAI-compatible proxy
+## Inference proxy (Anthropic primary, OpenAI compatibility)
 
-### `POST /v1/chat/completions`
+The primary inference surface is the Anthropic Messages API. The OpenAI endpoints are kept as a compatibility surface; both are proxied to the same engine with the same auth, limits, and usage accounting.
 
-Forwards a chat completion request to the active engine. The JSON body must be an object with a registered `model` string. Other fields are forwarded to the upstream OpenAI-compatible engine.
+### `POST /v1/messages`
+
+Forwards an Anthropic Messages request to the active engine. The JSON body must be an object with a registered `model` string and follows the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages): `messages` and `max_tokens` are required upstream; `system`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `tools`, and `tool_choice` are forwarded as-is.
 
 ```bash
-curl -s "$BASE_URL/v1/chat/completions" \
+curl -s "$BASE_URL/v1/messages" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "tinyllama",
+    "max_tokens": 1024,
     "messages": [
       {"role":"user","content":"What is 2 plus 2?"}
     ],
@@ -724,55 +729,68 @@ The response is the upstream engine response. A typical response has this shape:
 
 ```json
 {
-  "id": "chatcmpl-example",
-  "object": "chat.completion",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "2 plus 2 is 4."
-      },
-      "finish_reason": "stop"
-    }
+  "id": "msg_example",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {"type": "text", "text": "2 plus 2 is 4."}
   ],
+  "model": "tinyllama",
+  "stop_reason": "end_turn",
   "usage": {
-    "prompt_tokens": 18,
-    "completion_tokens": 8,
-    "total_tokens": 26
+    "input_tokens": 18,
+    "output_tokens": 8
   }
 }
 ```
 
-The exact id, text, and token counts come from the engine. A missing `model` returns HTTP `400`. An unregistered model returns HTTP `404` with code `model_not_found`. If the active engine is not installed or cannot start the selected model, the proxy returns HTTP `502`. If a token limit on the calling key or its workspace would be exceeded, the proxy returns HTTP `429` with the OpenAI-style body shown in [Token limits](#token-limits) and never forwards the request.
+The exact id, text, and token counts come from the engine. A missing `model` returns HTTP `400`. An unregistered model returns HTTP `404` with code `model_not_found`. If the active engine is not installed or cannot start the selected model, the proxy returns HTTP `502`. If a token limit on the calling key or its workspace would be exceeded, the proxy returns HTTP `429` with the standard error body shown in [Token limits](#token-limits) and never forwards the request.
 
-### `POST /v1/completions`
+### `POST /v1/messages/count_tokens`
 
-Forwards a legacy text completion request to the active engine. The body must contain a registered `model` string. Other fields are forwarded.
+Forwards a token-counting request to the active engine (llama.cpp, vLLM, and SGLang all implement it). The body takes the same fields as `POST /v1/messages` except `max_tokens`, which is not required. The response is the upstream `{"input_tokens": ...}` payload. Usage is not recorded for token counting - nothing is generated.
 
 ```bash
-curl -s "$BASE_URL/v1/completions" \
+curl -s "$BASE_URL/v1/messages/count_tokens" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "tinyllama",
-    "prompt": "Complete this sentence: Local models are",
-    "max_tokens": 32
+    "messages": [
+      {"role":"user","content":"What is 2 plus 2?"}
+    ]
   }'
 ```
 
-The response is the upstream completion response, normally with a `choices` array and a `usage` object. Usage recording follows the same non-streaming and streaming rules as chat completions. The same HTTP `429` rate-limit error is returned when a token limit on the calling key or its workspace would be exceeded.
+### OpenAI compatibility endpoints
 
-### Streaming
-
-Set `"stream": true` in either proxy request. The proxy returns `text/event-stream` and forwards the upstream event bytes. It adds or replaces `stream_options.include_usage` with `true` so it can find final token counts for accounting.
+`POST /v1/chat/completions` and `POST /v1/completions` forward OpenAI-format requests to the active engine, exactly as before; the body must contain a registered `model` string and other fields are forwarded. These exist for existing OpenAI clients - new integrations should prefer `POST /v1/messages`.
 
 ```bash
-curl -N "$BASE_URL/v1/chat/completions" \
+curl -s "$BASE_URL/v1/chat/completions" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "tinyllama",
+    "messages": [
+      {"role":"user","content":"What is 2 plus 2?"}
+    ]
+  }'
+```
+
+The response is the upstream OpenAI-shaped response (`choices`, `usage.prompt_tokens`/`completion_tokens`). The same 400/404/429/502 errors apply.
+
+### Streaming
+
+Set `"stream": true` in the `POST /v1/messages` body (or in the OpenAI compatibility requests). The proxy returns `text/event-stream` and forwards the upstream Anthropic SSE events (`message_start`, `content_block_delta`, `message_delta`, `message_stop`) unchanged. Token counts are read from the `message_start` and final `message_delta` events for accounting.
+
+```bash
+curl -N "$BASE_URL/v1/messages" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "tinyllama",
+    "max_tokens": 1024,
     "messages": [{"role":"user","content":"Say hello."}],
     "stream": true
   }'
@@ -815,23 +833,26 @@ curl -s "$BASE_URL/"
 
 Open the same URL in a browser to use the rendered GUI.
 
-## OpenAI SDK compatibility
+## Anthropic SDK compatibility
 
-The proxy uses OpenAI-compatible paths and request formats. Configure an OpenAI client with the outo-llms URL including `/v1` and an `outo_sk_...` key:
+The proxy's primary surface is the Anthropic Messages API. Configure an Anthropic client with the outo-llms base URL and an `outo_sk_...` key. The SDK sends the key as a Bearer token (`auth_token`), which is what outo-llms expects:
 
 ```python
-from openai import OpenAI
+from anthropic import Anthropic
 
-client = OpenAI(
-    base_url="https://<your-server-ip-or-domain>/v1",
-    api_key="outo_sk_<key-created-by-signup>",
+client = Anthropic(
+    base_url="https://<your-server-ip-or-domain>",
+    auth_token="outo_sk_<key-created-by-signup>",
 )
 
-response = client.chat.completions.create(
+response = client.messages.create(
     model="tinyllama",
+    max_tokens=1024,
     messages=[{"role": "user", "content": "Say hello."}],
 )
-print(response.choices[0].message.content)
+print(response.content[0].text)
 ```
 
-On machines where the outo-llms local CA is installed, no special client handling is needed. Otherwise, download the server's `certs/ca.crt` and pass it as the CA bundle (for the OpenAI Python client, an `httpx.Client` configured with `verify="/path/to/ca.crt"`), or disable verification in non-production environments (`verify=False`).
+On machines where the outo-llms local CA is installed, no special client handling is needed. Otherwise, download the server's `certs/ca.crt` and pass it as the CA bundle (for the Anthropic Python client, an `httpx.Client` configured with `verify="/path/to/ca.crt"`), or disable verification in non-production environments (`verify=False`).
+
+OpenAI clients keep working against the compatibility surface: point an OpenAI SDK at `https://<your-server-ip-or-domain>/v1` with an `outo_sk_...` key and call `chat.completions.create(...)` as usual.

@@ -1,6 +1,8 @@
 """vLLM engine adapter.
 
-Serves Hugging Face models through vLLM's OpenAI-compatible API server.
+Serves Hugging Face models through vLLM's API server, which exposes both
+the OpenAI endpoints and the Anthropic Messages API
+(``vllm.entrypoints.anthropic``, ``POST /v1/messages``).
 The adapter only describes what to install and how to launch; installation
 happens in the engine's isolated venv, managed by
 :class:`outo_llms.engines.manager.EngineManager`.
@@ -19,7 +21,7 @@ class VllmAdapter(EngineAdapter):
 
     name: ClassVar[str] = "vllm"
     display_name: ClassVar[str] = "vLLM"
-    pip_requirements: ClassVar[list[str]] = ["vllm>=0.6"]
+    pip_requirements: ClassVar[list[str]] = ["vllm>=0.19"]
     default_port: ClassVar[int] = 8613
     # cuda uses the PyPI wheels; rocm/cpu are source builds (VLLM_TARGET_DEVICE).
     supported_backends: ClassVar[list[str]] = ["cuda", "rocm", "cpu"]

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .. import accounts
-from ..deps import UserDep, openai_error
+from ..deps import UserDep, api_error
 from ..schemas import Limits, WorkspaceCreate, WorkspaceOut
 
 router = APIRouter(prefix="/v1/workspaces", tags=["workspaces"])
@@ -20,7 +20,7 @@ def create_workspace(
     try:
         result = accounts.create_workspace(ctx.user_id, body.name)
     except ValueError as exc:
-        raise openai_error(409, str(exc)) from exc
+        raise api_error(409, str(exc)) from exc
     return WorkspaceOut.model_validate(result)
 
 
@@ -50,9 +50,9 @@ def update_workspace_limits(
             continue
         updates = {field: getattr(body, field) for field in body.model_fields_set}
         if not updates:
-            raise openai_error(400, "request body must set at least one limit field")
+            raise api_error(400, "request body must set at least one limit field")
         accounts.set_workspace_limits(ws["id"], updates)
         for refreshed in accounts.list_workspaces(ctx.user_id):
             if refreshed["id"] == ws["id"]:
                 return WorkspaceOut.model_validate(refreshed)
-    raise openai_error(404, f"workspace {name!r} not found")
+    raise api_error(404, f"workspace {name!r} not found")

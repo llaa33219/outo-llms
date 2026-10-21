@@ -104,7 +104,7 @@ outo-llms models add qwen \
   --kind hf
 ```
 
-SGLang does not support GGUF models. Register GGUF with llama.cpp instead. The SGLang upstream server exposes `/v1/chat/completions`, `/v1/completions`, and `/v1/models` with the same usage fields and `stream_options.include_usage` semantics as vLLM, so the proxy and the engine manager's `/v1/models` readiness probe work unchanged.
+SGLang does not support GGUF models. Register GGUF with llama.cpp instead. The SGLang upstream server exposes the Anthropic Messages API (`/v1/messages` and `/v1/messages/count_tokens`) with the same `usage.input_tokens`/`usage.output_tokens` fields as vLLM, plus the OpenAI endpoints, so the proxy and the engine manager's `/v1/models` readiness probe work unchanged.
 
 ## Model source formats
 
@@ -241,7 +241,7 @@ The CLI does not put this token in `config.json`, the SQLite database, or the ac
 
 ## Serving arguments
 
-The adapters launch OpenAI-compatible upstream servers with their isolated venv interpreter.
+The adapters launch upstream servers (Anthropic Messages API plus OpenAI endpoints) with their isolated venv interpreter. All three engines natively serve `POST /v1/messages`; llama.cpp's Anthropic support requires a current llama.cpp build (use `outo-llms engine upgrade` on older installations).
 
 llama.cpp is started as `python -m llama_cpp.server` with `--host 127.0.0.1`, an available port starting at `8612`, and the model-specific flags described above.
 

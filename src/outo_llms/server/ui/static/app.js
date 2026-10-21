@@ -645,7 +645,7 @@
       pageHeader(
         "CATALOG",
         "Models",
-        "Registered models available through the OpenAI-compatible endpoint.",
+        "Registered models available through the Anthropic Messages endpoint.",
         retryButton("retry-view", "Refresh"),
       ),
     );
@@ -786,26 +786,27 @@
   function modelRequestExamples(modelName) {
     const origin = window.location.origin;
     const modelLiteral = JSON.stringify(modelName);
-    const baseUrlLiteral = JSON.stringify(`${origin}/v1`);
+    const baseUrlLiteral = JSON.stringify(origin);
     const requestBody = JSON.stringify({
       model: modelName,
+      max_tokens: 1024,
       messages: [{ role: "user", content: "Hello!" }],
     });
     return [
       {
         title: "curl",
-        snippet: `curl -s ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer outo_sk_..." \\\n  -H "Content-Type: application/json" \\\n  -d '${requestBody}'`,
-        streamingSnippet: `curl -sN ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer outo_sk_..." \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": ${modelLiteral}, "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'`,
+        snippet: `curl -s ${origin}/v1/messages \\\n  -H "Authorization: Bearer outo_sk_..." \\\n  -H "Content-Type: application/json" \\\n  -d '${requestBody}'`,
+        streamingSnippet: `curl -sN ${origin}/v1/messages \\\n  -H "Authorization: Bearer outo_sk_..." \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": ${modelLiteral}, "max_tokens": 1024, "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'`,
       },
       {
         title: "Python",
-        snippet: `from openai import OpenAI\n\nclient = OpenAI(base_url=${baseUrlLiteral}, api_key="outo_sk_...")\nresp = client.chat.completions.create(\n    model=${modelLiteral},\n    messages=[{"role": "user", "content": "Hello!"}],\n)\nprint(resp.choices[0].message.content)`,
-        streamingSnippet: `stream = client.chat.completions.create(\n    model=${modelLiteral},\n    messages=[{"role": "user", "content": "Hello!"}],\n    stream=True,\n)\nfor chunk in stream:\n    print(chunk.choices[0].delta.content or "", end="")`,
+        snippet: `from anthropic import Anthropic\n\nclient = Anthropic(base_url=${baseUrlLiteral}, auth_token="outo_sk_...")\nresp = client.messages.create(\n    model=${modelLiteral},\n    max_tokens=1024,\n    messages=[{"role": "user", "content": "Hello!"}],\n)\nprint(resp.content[0].text)`,
+        streamingSnippet: `with client.messages.stream(\n    model=${modelLiteral},\n    max_tokens=1024,\n    messages=[{"role": "user", "content": "Hello!"}],\n) as stream:\n    for text in stream.text_stream:\n        print(text, end="")`,
       },
       {
         title: "Node.js",
-        snippet: `import OpenAI from "openai";\n\nconst client = new OpenAI({ baseURL: ${baseUrlLiteral}, apiKey: "outo_sk_..." });\nconst resp = await client.chat.completions.create({\n  model: ${modelLiteral},\n  messages: [{ role: "user", content: "Hello!" }],\n});\nconsole.log(resp.choices[0].message.content);`,
-        streamingSnippet: `const stream = await client.chat.completions.create({\n  model: ${modelLiteral},\n  messages: [{ role: "user", content: "Hello!" }],\n  stream: true,\n});\nfor await (const chunk of stream) {\n  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");\n}`,
+        snippet: `import Anthropic from "@anthropic-ai/sdk";\n\nconst client = new Anthropic({ baseURL: ${baseUrlLiteral}, authToken: "outo_sk_..." });\nconst resp = await client.messages.create({\n  model: ${modelLiteral},\n  max_tokens: 1024,\n  messages: [{ role: "user", content: "Hello!" }],\n});\nconsole.log(resp.content[0].text);`,
+        streamingSnippet: `const stream = client.messages.stream({\n  model: ${modelLiteral},\n  max_tokens: 1024,\n  messages: [{ role: "user", content: "Hello!" }],\n});\nstream.on("text", (text) => process.stdout.write(text));`,
       },
     ];
   }
@@ -988,7 +989,7 @@
     headingCopy.append(
       node("p", "eyebrow", "ACCESS"),
       node("h3", "card-title", "Inference API keys"),
-      node("p", "card-description", "Use these keys as Bearer tokens for /v1/chat/completions and other inference endpoints."),
+      node("p", "card-description", "Use these keys as Bearer tokens for /v1/messages and other inference endpoints."),
       node("p", "card-description", "Keys you created in this browser can be copied again; keys created elsewhere were shown once."),
     );
     heading.append(headingCopy);
@@ -1947,7 +1948,7 @@
       state.userStatus = "idle";
       openSecretModal(
         "Your inference API key",
-        "This key is for inference clients (curl, OpenAI SDK). Store it somewhere safe - it is shown once.",
+        "This key is for inference clients (curl, Anthropic SDK). Store it somewhere safe - it is shown once.",
         apiKey,
       );
       cacheCreatedInferenceKey(state.currentWorkspaceName, apiKey, new Set());

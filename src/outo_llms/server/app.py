@@ -40,8 +40,8 @@ def create_app() -> FastAPI:
     app = FastAPI(title="outo-llms", version=outo_llms.__version__, lifespan=_lifespan)
 
     @app.exception_handler(HTTPException)
-    def openai_shape_errors(_request: Request, exc: HTTPException) -> JSONResponse:
-        """Normalize every HTTP error to the OpenAI ``{"error": {...}}`` body."""
+    def api_shape_errors(_request: Request, exc: HTTPException) -> JSONResponse:
+        """Normalize every HTTP error to the ``{"error": {...}}`` body."""
         detail = exc.detail
         if isinstance(detail, dict) and "error" in detail:
             return JSONResponse(

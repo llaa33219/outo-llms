@@ -10,7 +10,7 @@ The module map is:
 
 * `core/` owns paths, JSON configuration, explicit action handling, process control, and certificates.
 * `engines/` owns the adapter contract, the llama.cpp adapter, the vLLM adapter, and the lifecycle manager.
-* `server/` owns the SQLite database, accounts, workspaces, keys, model registry, usage ledger, routes, and OpenAI-compatible proxy.
+* `server/` owns the SQLite database, accounts, workspaces, keys, model registry, usage ledger, routes, and the Anthropic-compatible proxy.
 * `cli/` owns the `outo-llms` command tree and one module per command area.
 
 See the complete [architecture map](architecture.md). The boundaries mean an API route does not need to know how an engine virtual environment is created, and a model command does not need to know how a request is proxied.
@@ -25,7 +25,7 @@ The same pattern applies to CLI work. A new command belongs in a module under `c
 
 A small command set and a small GUI cover the normal lifecycle. `setup` creates a working deployment. `models add`, `models list`, and `models remove` manage the registry. The engine, server, and reset commands cover the remaining operational actions. The web GUI at `/` offers signup and login, a read-only model catalog, workspace and API-key management, and server status. Swagger UI at `/docs` exposes the HTTP API interactively.
 
-The implementation keeps configuration human-readable in one JSON file and persistence local in one SQLite database. Clients can use ordinary `curl` requests or an OpenAI-compatible SDK.
+The implementation keeps configuration human-readable in one JSON file and persistence local in one SQLite database. Clients can use ordinary `curl` requests or the Anthropic SDK.
 
 ## Automation
 

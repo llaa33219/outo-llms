@@ -7,6 +7,10 @@ is the manager's job, inside an isolated venv. The adapter only describes
 
 Adding a new engine = adding one adapter module and registering it in
 :func:`get_adapter` / :func:`adapter_names`. Nothing else changes (fluidity).
+
+Every bundled adapter launches a server that natively speaks the Anthropic
+Messages API (``POST /v1/messages``) alongside the OpenAI endpoints; the
+outo-llms proxy exposes the Anthropic surface to clients.
 """
 
 from __future__ import annotations
@@ -49,7 +53,7 @@ class EngineAdapter(ABC):
         *,
         engine_dir: Path | None = None,
     ) -> list[str]:
-        """Argv that starts an OpenAI-compatible server for ``model``.
+        """Argv that starts an Anthropic-compatible server for ``model``.
 
         ``python`` is the engine venv's interpreter. ``engine_dir`` is the
         instance's directory (needed by source-built engines). The server

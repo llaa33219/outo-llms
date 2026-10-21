@@ -66,7 +66,7 @@ Example response shape:
 }
 ```
 
-The response carries two credentials. Use the API key for inference (`POST /v1/chat/completions`, `POST /v1/completions`). Use the session token for everything else (`/v1/account/me`, `/v1/usage`, `/v1/workspaces`, `/v1/keys`, `/v1/status`). Set both in your shell. If you signed up in the GUI, use the copied values instead:
+The response carries two credentials. Use the API key for inference (`POST /v1/messages`; the OpenAI endpoints `POST /v1/chat/completions` and `POST /v1/completions` are also kept for compatibility). Use the session token for everything else (`/v1/account/me`, `/v1/usage`, `/v1/workspaces`, `/v1/keys`, `/v1/status`). Set both in your shell. If you signed up in the GUI, use the copied values instead:
 
 ```bash
 API_KEY="outo_sk_<paste-the-key-from-signup>"
@@ -111,16 +111,17 @@ outo-llms models add tinyllama \
 
 Use one setup path in a fresh installation. Switching engines later is covered in [Engines](engines.md).
 
-## 5. Send the first chat completion
+## 5. Send the first message
 
-Use the API key as a Bearer token. The proxy resolves `tinyllama` in the registry, starts the active engine on an internal loopback port if necessary, forwards the request, and returns the upstream OpenAI-style response. Because the weights are already in the cache from step 4, the first request does not wait on a download. The trust store already trusts the local CA on the server, so no `-k` is needed; on other machines that have not installed `ca.crt`, pass `-k` until they do:
+Use the API key as a Bearer token. The proxy resolves `tinyllama` in the registry, starts the active engine on an internal loopback port if necessary, forwards the request, and returns the upstream Anthropic Messages response. Because the weights are already in the cache from step 4, the first request does not wait on a download. The trust store already trusts the local CA on the server, so no `-k` is needed; on other machines that have not installed `ca.crt`, pass `-k` until they do:
 
 ```bash
-curl -ks "$BASE_URL/v1/chat/completions" \
+curl -ks "$BASE_URL/v1/messages" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "tinyllama",
+    "max_tokens": 1024,
     "messages": [
       {"role": "user", "content": "Say hello in one sentence."}
     ]
@@ -131,7 +132,7 @@ The engine starts on demand. llama.cpp listens internally on port `8612` by defa
 
 ## 6. Inspect usage
 
-Usage management endpoints require the session token. The proxy records the upstream response's `usage` token counts against the calling workspace.
+Usage management endpoints require the session token. The proxy records the upstream response's `usage.input_tokens`/`usage.output_tokens` token counts against the calling workspace.
 
 ```bash
 curl -ks "$BASE_URL/v1/usage" \

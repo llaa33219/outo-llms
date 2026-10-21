@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from .. import accounts
-from ..deps import UserDep, bearer_token, openai_error
+from ..deps import UserDep, bearer_token, api_error
 from ..schemas import (
     LoginRequest,
     LoginResponse,
@@ -23,7 +23,7 @@ def signup(body: SignupRequest) -> SignupResponse:
     try:
         result = accounts.signup(body.username, body.password)
     except ValueError as exc:
-        raise openai_error(409, str(exc)) from exc
+        raise api_error(409, str(exc)) from exc
     return SignupResponse.model_validate(result)
 
 
@@ -33,7 +33,7 @@ def login(body: LoginRequest) -> LoginResponse:
     try:
         result = accounts.login(body.username, body.password)
     except ValueError as exc:
-        raise openai_error(401, str(exc)) from exc
+        raise api_error(401, str(exc)) from exc
     return LoginResponse.model_validate(result)
 
 
@@ -60,5 +60,5 @@ def change_password(body: PasswordChange, ctx: UserDep) -> dict[str, bool]:
     try:
         accounts.change_password(ctx.user_id, body.current_password, body.new_password)
     except ValueError as exc:
-        raise openai_error(401, str(exc)) from exc
+        raise api_error(401, str(exc)) from exc
     return {"changed": True}

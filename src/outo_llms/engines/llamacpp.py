@@ -7,7 +7,8 @@ Two installation modes behind one engine type:
 - **binary mode** (``source`` is a git URL or a local checkout): a fork of
   llama.cpp built with cmake, served with ``build/bin/llama-server``.
 
-Both serve GGUF models through an OpenAI-compatible HTTP API on 127.0.0.1.
+Both serve GGUF models through an HTTP API on 127.0.0.1 that includes the
+Anthropic Messages API (``POST /v1/messages``).
 Installation lives in :class:`outo_llms.engines.manager.EngineManager`.
 """
 

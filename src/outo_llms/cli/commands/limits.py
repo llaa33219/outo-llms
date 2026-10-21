@@ -2,7 +2,7 @@
 
 Limits are token budgets per period (all-time ``total``, UTC calendar
 ``monthly``, ISO ``weekly``, rolling ``five_hour``); an unset period is
-unlimited. The API server enforces them with OpenAI-style 429 errors
+unlimited. The API server enforces them with 429 errors
 before forwarding inference requests.
 """
 

@@ -29,8 +29,8 @@ src/outo_llms/
 │   ├── registry.py         model registry CRUD
 │   ├── usage.py            usage record and aggregate summary
 │   ├── schemas.py          Pydantic v2 request and response models
-│   ├── deps.py             OpenAI-style error helper, SessionDep and ApiKeyDep auth dependencies
-│   ├── proxy.py            OpenAI-compatible proxy with usage accounting
+│   ├── deps.py             API error helper, SessionDep and ApiKeyDep auth dependencies
+│   ├── proxy.py            Inference proxy (Anthropic primary, OpenAI compat) with usage accounting
 │   └── routes/
 │       ├── account.py      signup, login, logout, password, me
 │       ├── workspaces.py   POST /v1/workspaces, GET /v1/workspaces
@@ -56,7 +56,7 @@ The implementation is layered:
 
 * `core/` is shared infrastructure. It has no knowledge of engine adapters, accounts, or HTTP routes.
 * `engines/` knows about adapters and how to run them. It calls `core/` for paths, consent, configuration, and process control.
-* `server/` knows about HTTP, persistence, accounts, the proxy, and the OpenAI-compatible surface. It calls `engines/` lazily for inference and `core/` for shared helpers.
+* `server/` knows about HTTP, persistence, accounts, the proxy, and the Anthropic-compatible surface. It calls `engines/` lazily for inference and `core/` for shared helpers.
 * `cli/` knows about the user command surface. It calls into the same modules as the server.
 
 The boundaries mean a change to a CLI command does not change the server, and a change to an engine adapter does not change accounts or the CLI.
@@ -86,7 +86,7 @@ client                outo-llms API server                EngineManager       en
   │                          │ record usage (non-stream or     │                    │
   │                          │   final SSE event with usage)   │                    │
   │ ◀────────────────────────                                  │                    │
-  │ OpenAI-style response or SSE stream                        │                    │
+  │ Anthropic Messages response or SSE stream                  │                    │
 ```
 
 The root request, `GET /`, serves the dependency-free GUI from `server/ui/static/`; named assets are available at `/ui/<name>`, and Swagger UI remains at `/docs`.
@@ -95,17 +95,17 @@ The GUI's container layout follows **BLP TILE**, the design language in [`style.
 
 Two auth dependencies live in `server/deps.py`:
 
-* `ApiKeyDep` accepts an `outo_sk_` Bearer only and resolves to a `WorkspaceContext`. It is used by `POST /v1/chat/completions`, `POST /v1/completions`, and `GET /v1/models`.
+* `ApiKeyDep` accepts an `outo_sk_` Bearer only and resolves to a `WorkspaceContext`. It is used by `POST /v1/messages`, `POST /v1/messages/count_tokens`, the OpenAI compatibility endpoints (`POST /v1/chat/completions`, `POST /v1/completions`), and `GET /v1/models`.
 * `SessionDep` accepts an `outo_st_` Bearer only and resolves to the calling user. It is used by `GET /v1/status`, `POST /v1/account/logout`, `POST /v1/account/password`, `GET /v1/account/me`, every `workspaces` and `keys` route, `GET /v1/usage`, and `GET /v1/models` (which accepts either).
 
-The OpenAI-shaped error helper is used for every error response, including `404`, so the wire shape stays consistent across both auth styles.
+The shared error helper is used for every error response, including `404`, so the wire shape stays consistent across both auth styles.
 
-For `chat/completions` and `completions`, the proxy does the following:
+For `messages`, `messages/count_tokens`, and the OpenAI compatibility endpoints, the proxy does the following:
 
 1. Parse and validate the JSON body.
 2. Resolve the `model` field against the registry. Missing `model` is HTTP `400`. Unknown model is HTTP `404` with `code: "model_not_found"`.
 3. Call `EngineManager.ensure_running(model_ref)` to start or reuse the engine. The weights are already in the shared HF cache because `models add` downloaded them at registration. A missing engine installation or an unsupported kind is HTTP `502`.
-4. Forward the request to the upstream OpenAI-compatible URL on `127.0.0.1:<engine-port>`.
+4. Forward the request to the upstream URL (Anthropic Messages or OpenAI, matching the endpoint) on `127.0.0.1:<engine-port>`.
 5. For non-streaming responses, parse JSON, read `usage.prompt_tokens` and `usage.completion_tokens`, and record a usage row.
 6. For streaming responses, set `stream_options.include_usage: true`, stream SSE bytes, then inspect the assembled text for a usage-bearing event and record usage best effort.
 
@@ -121,7 +121,7 @@ shell
         │   ├── /v1/workspaces, /v1/workspaces/{name}/keys
         │   ├── /v1/keys/{key_id}
         │   ├── /v1/usage, /v1/status
-        │   └── /v1/models, /v1/chat/completions, /v1/completions
+        │   └── /v1/models, /v1/messages, /v1/messages/count_tokens, /v1/chat/completions, /v1/completions
         ├── EngineManager.ensure_running on demand
         │   └── python -m llama_cpp.server (or vllm.entrypoints.openai.api_server, or sglang.launch_server)
         └── EngineManager.download_model invoked by the CLI at registration time
@@ -138,7 +138,7 @@ The `__main__.py` for `outo_llms.server` calls `uvicorn.run(...)` with the confi
 
 * **Adding an engine.** Create a new module under `src/outo_llms/engines/` with a class that extends `EngineAdapter`. Add its name to `adapter_names()` and the lookup in `get_adapter()`. The manager, server, and CLI pick it up automatically.
 * **Adding a CLI command.** Create a new module under `src/outo_llms/cli/commands/` with a Typer function. Register it in `src/outo_llms/cli/app.py`. For a command group, create a Typer app and use `app.add_typer`.
-* **Adding an HTTP route.** Create a new module under `src/outo_llms/server/routes/` with a router. Include it in `src/outo_llms/server/app.py`. Use the `SessionDep` dependency for management routes (account, workspaces, keys, usage, status), the `ApiKeyDep` dependency for inference routes (chat/completions, completions), and the `openai_error` helper for OpenAI-style error responses. `GET /v1/models` is the one route that accepts either.
+* **Adding an HTTP route.** Create a new module under `src/outo_llms/server/routes/` with a router. Include it in `src/outo_llms/server/app.py`. Use the `SessionDep` dependency for management routes (account, workspaces, keys, usage, status), the `ApiKeyDep` dependency for inference routes (messages, chat/completions, completions), and the `api_error` helper for the shared error shape. `GET /v1/models` is the one route that accepts either.
 * **Adding configuration.** Extend a dataclass in `src/outo_llms/core/config.py`. The loader falls back to defaults for missing keys, so older `config.json` files still work.
 
 The [development guide](development.md) walks through each extension in detail.
@@ -161,6 +161,6 @@ These are stable contracts documented for users and contributors:
 * The process helpers `start_server`, `stop_server`, and `restart_server` in `core/process.py`.
 * The console entry point `outo_llms.cli.app:main`, exposed as `outo-llms`.
 * The module entry point `python -m outo_llms.server`.
-* The OpenAI-style error shape.
+* The shared `{"error": {"message", "type"}}` error shape.
 
 Changes to those contracts require updates to every caller and to the documentation.

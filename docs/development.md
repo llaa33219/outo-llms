@@ -131,7 +131,7 @@ class ExampleAdapter(EngineAdapter):
 1. Create `src/outo_llms/server/routes/<group>.py` with an `APIRouter` and route functions.
 2. Add Pydantic request and response models in `src/outo_llms/server/schemas.py` for any new request and response bodies.
 3. For authenticated routes, take the dependency that matches the credential: `ctx: UserDep` for account management (session token) or `ctx: WorkspaceDep` for inference (API key). Use `SessionOrWorkspaceDep` only when both are valid, as with `GET /v1/models`.
-4. Use the `openai_error` helper from `src/outo_llms/server/deps.py` to produce OpenAI-style error responses.
+4. Use the `api_error` helper from `src/outo_llms/server/deps.py` to produce the shared `{"error": ...}` error responses.
 5. Include the router in `src/outo_llms/server/app.py` with `app.include_router(...)`.
 6. Update the [Server API](server-api.md) page.
 
@@ -174,5 +174,5 @@ Before a release:
 
 * Keep the listed stable contracts intact unless the change is part of a deliberate contract change that updates every caller and the docs. The stable contracts are listed in [Architecture](architecture.md).
 * Keep API key plaintext out of logs and the action log.
-* Keep the OpenAI-style error response shape.
+* Keep the shared `{"error": {"message", "type"}}` error response shape.
 * Keep the engine adapters bound to `127.0.0.1`.
