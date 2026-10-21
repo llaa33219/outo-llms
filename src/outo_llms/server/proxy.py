@@ -277,7 +277,9 @@ async def _forward(
             raise
         url = f"{base_url}/{endpoint}"
         # count_tokens never streams; /messages and the OpenAI endpoints do.
-        if body.get("stream") and protocol in ("anthropic", "openai"):
+        is_streamable = endpoint in ("messages", "chat/completions", "completions")
+        wants_stream = bool(body.get("stream")) if body.get("stream") is not None else False
+        if wants_stream and is_streamable:
             return await _forward_stream(url, body, ctx, model_name, request_id, protocol)
         try:
             return await _forward_nonstream(url, body, ctx, model_name, protocol)
