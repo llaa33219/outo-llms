@@ -172,6 +172,45 @@ Asks for confirmation, then removes the named registry row. It does not delete d
 outo-llms models remove tinyllama
 ```
 
+## `outo-llms configure`
+
+Change settings of an existing deployment without re-running `setup`.
+`setup` is for first-time installation (it installs an engine and initializes
+a fresh deployment); `configure` merges changes into the existing config.
+Accounts, models, the database, and engine settings are never touched.
+
+### `outo-llms configure server`
+
+Run without options to print the current server configuration. Every option
+is optional; only the ones given are changed. A restart is required for a
+running server to pick up the new settings - pass `--restart` to restart
+immediately, or run `outo-llms restart` yourself.
+
+| Option | Purpose |
+| --- | --- |
+| `--host <addr>` | Interface the API server binds to (e.g. `0.0.0.0`) |
+| `--port <n>`, `-p <n>` | Port the API server listens on |
+| `--https` / `--no-https` | Serve the API over HTTPS |
+| `--domain <name>` | Domain or IP for the HTTPS certificate (required when enabling https) |
+| `--restart` | Restart the server after applying the change |
+
+Switch an HTTPS-on-443 deployment to plain HTTP on port 80 for LAN use:
+
+```bash
+outo-llms configure server --no-https --port 80 --restart
+```
+
+Change only the bind interface:
+
+```bash
+outo-llms configure server --host 0.0.0.0 --restart
+```
+
+Enabling `--https` regenerates the server certificate for `--domain` when
+needed (the local CA under the certs directory is reused). Changing to a
+privileged port (below 1024) re-grants the bind capability when the server
+is restarted, the same way `outo-llms restart` does.
+
 ## `outo-llms engine`
 
 ```text

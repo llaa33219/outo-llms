@@ -122,6 +122,7 @@ writes a short summary you can copy into your shell history.
 | Command | Purpose |
 | --- | --- |
 | `outo-llms setup` | Automated, explicit server setup (engine, HTTPS, firewall, launch) |
+| `outo-llms configure server` | Change host/port/https/domain of an existing deployment |
 | `outo-llms models add <name>` | Register a model and download its weights |
 | `outo-llms models download <name>` | (Re)download weights for a registered model |
 | `outo-llms models list` | Show every registered model |

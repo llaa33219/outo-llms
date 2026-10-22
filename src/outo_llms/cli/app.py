@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from .commands import (
+    configure,
     engine,
     limits,
     models,
@@ -25,6 +26,7 @@ app = typer.Typer(
 )
 
 app.command("setup")(setup.setup)
+app.add_typer(configure.configure_app, name="configure")
 app.command("reset")(reset.reset)
 app.command("restart")(restart.restart)
 app.command("start")(start.start)
