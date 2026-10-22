@@ -169,10 +169,13 @@ def use(
     name: str = typer.Argument(..., help="Engine to make active (llamacpp, vllm, or sglang)."),
 ) -> None:
     """Select the active engine."""
+    manager = _manager()
     try:
-        _manager().use(name)
+        manager.use(name)
     except (ValueError, RuntimeError) as exc:
-        console.print(f"[bold red]error:[/] {exc}")
+        installed = ", ".join(e for e in manager.available() if manager.is_installed(e))
+        hint = f" (installed: {installed})" if installed else ""
+        console.print(f"[bold red]error:[/] {exc}{hint}")
         raise typer.Exit(1) from exc
     console.print(f"[green]active engine: {name}[/]")
 

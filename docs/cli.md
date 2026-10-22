@@ -62,6 +62,11 @@ Manages the model registry in the local SQLite database. By default, `models add
 
 ### `outo-llms models add`
 
+The `kind` is guessed from the source when `--kind` is omitted: a local
+`.gguf` file or path is `gguf`, a local directory is `hf`, a repo id whose
+name ends with `-gguf` (a GGUF quant repo) is `gguf`, and anything else is
+`hf`. Pass `--kind` explicitly when the guess could be wrong.
+
 ```text
 outo-llms models add NAME [OPTIONS]
 ```

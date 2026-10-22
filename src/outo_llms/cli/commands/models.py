@@ -156,6 +156,21 @@ def _download_weights(name: str, *, force: bool = False) -> bool:
     return True
 
 
+def _looks_like_gguf_repo(source: str) -> bool:
+    """Heuristic for GGUF-only HF repos (e.g. 'org/Ternary-Bonsai-27B-gguf').
+
+    Local paths and repo:file sources are decided elsewhere; this only
+    catches bare repo ids whose name clearly marks them as GGUF quant
+    repos, which would otherwise register as 'hf' and later fail with a
+    kind mismatch on llama.cpp.
+    """
+    repo = source.split(":", 1)[0]
+    if "/" not in repo:
+        return False
+    tail = repo.rsplit("/", 1)[-1].lower()
+    return tail.endswith("-gguf") or tail.endswith("_gguf") or tail == "gguf"
+
+
 @models_app.command("add")
 def add(
     name: str = typer.Argument(..., help="Registry name clients will use, e.g. 'tinyllama'."),
@@ -203,6 +218,8 @@ def add(
         elif Path(resolved_source).is_dir():
             resolved_kind = "hf"
         elif resolved_source.endswith(".gguf") or Path(resolved_source).is_file():
+            resolved_kind = "gguf"
+        elif _looks_like_gguf_repo(resolved_source):
             resolved_kind = "gguf"
         else:
             resolved_kind = "hf"

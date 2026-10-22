@@ -188,6 +188,14 @@ async def _forward_nonstream(
             upstream = await client.post(url, json=body)
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise api_error(502, f"could not connect to engine: {exc}") from exc
+        except httpx.TransportError as exc:
+            # The engine accepted the connection but dropped it mid-request
+            # (crash, OOM kill, model load failure). Point at the engine log.
+            raise api_error(
+                502,
+                f"engine dropped the connection while handling the request "
+                f"({type(exc).__name__}); check the engine log",
+            ) from exc
     try:
         data = upstream.json()
     except ValueError as exc:
@@ -267,6 +275,14 @@ async def _forward_stream(
         await client.aclose()
         live.end(request_id)
         raise api_error(502, f"could not connect to engine: {exc}") from exc
+    except httpx.TransportError as exc:
+        await client.aclose()
+        live.end(request_id)
+        raise api_error(
+            502,
+            f"engine dropped the connection while handling the request "
+            f"({type(exc).__name__}); check the engine log",
+        ) from exc
     return StreamingResponse(
         _stream_with_accounting(
             client, stream_ctx, upstream, ctx, model, request_id, protocol
