@@ -8,9 +8,10 @@ is the manager's job, inside an isolated venv. The adapter only describes
 Adding a new engine = adding one adapter module and registering it in
 :func:`get_adapter` / :func:`adapter_names`. Nothing else changes (fluidity).
 
-Every bundled adapter launches a server that natively speaks the Anthropic
-Messages API (``POST /v1/messages``) alongside the OpenAI endpoints; the
-outo-llms proxy exposes the Anthropic surface to clients.
+Every bundled adapter launches a server that speaks the OpenAI endpoints;
+most also serve the Anthropic Messages API (``POST /v1/messages``) natively.
+Adapters that do not (``supports_anthropic = False``) get an Anthropic<->OpenAI
+translation layer in the proxy so the Anthropic surface works on every engine.
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ class EngineAdapter(ABC):
     # with a clear error instead of being silently ignored.
     supported_backends: ClassVar[list[str]] = ["cuda", "cpu"]
     default_backend: ClassVar[str] = "cuda"
+    # Whether the launched server speaks the Anthropic Messages API natively.
+    # When False the proxy translates Anthropic requests/responses to/from
+    # the OpenAI chat format so /v1/messages still works.
+    supports_anthropic: ClassVar[bool] = True
 
     @abstractmethod
     def serve_argv(

@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..engines.base import ModelRef
 from . import accounts, live, registry, usage
+from . import anthropic_translate
 from .deps import SessionOrWorkspaceDep, WorkspaceDep, api_error
 
 router = APIRouter(prefix="/v1", tags=["proxy"])
@@ -96,6 +97,16 @@ def _ensure_base_url(model_ref: ModelRef) -> str:
         return manager.ensure_running(model_ref)
     except (RuntimeError, ValueError) as exc:
         raise api_error(502, str(exc)) from exc
+
+
+def _native_anthropic(model_ref: ModelRef) -> bool:
+    """Whether the engine serving ``model_ref`` speaks /v1/messages itself."""
+    from outo_llms.engines.manager import EngineManager
+
+    try:
+        return EngineManager().supports_anthropic(model_ref)
+    except (RuntimeError, ValueError):
+        return True  # fail open: the forward path reports real engine errors
 
 
 def _usage_tokens(data: dict[str, Any], protocol: str) -> tuple[int, int] | None:
@@ -182,7 +193,13 @@ async def _forward_nonstream(
     ctx: accounts.WorkspaceContext,
     model: str,
     protocol: str,
+    *,
+    translate: bool = False,
 ) -> JSONResponse:
+    if translate:
+        # Engine lacks native /v1/messages: convert to the OpenAI chat
+        # format, then convert the response back to Anthropic shape.
+        body = anthropic_translate.request_to_openai(body)
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         try:
             upstream = await client.post(url, json=body)
@@ -215,6 +232,8 @@ async def _forward_nonstream(
                 f"engine returned invalid Anthropic response shape: {list(data.keys())}"
             )
     
+    if translate and upstream.status_code == 200 and isinstance(data, dict):
+        data = anthropic_translate.response_to_anthropic(data, model)
     _record_nonstream_usage(ctx, model, data, protocol)
     return JSONResponse(content=data, status_code=upstream.status_code)
 
@@ -227,12 +246,21 @@ async def _stream_with_accounting(
     model: str,
     request_id: int,
     protocol: str,
+    *,
+    translate: bool = False,
 ) -> AsyncIterator[bytes]:
     chunks: list[bytes] = []
     try:
         async for chunk in upstream.aiter_bytes():
             chunks.append(chunk)
-            yield chunk
+            if not translate:
+                yield chunk
+        if translate:
+            # The engine streamed OpenAI SSE; convert the whole stream to an
+            # Anthropic event sequence once it completes (accounting needs
+            # the buffered text anyway).
+            text = b"".join(chunks).decode("utf-8", errors="replace")
+            yield anthropic_translate.sse_to_anthropic(text, model).encode("utf-8")
     finally:
         await stream_ctx.__aexit__(None, None, None)
         await client.aclose()
@@ -240,7 +268,7 @@ async def _stream_with_accounting(
     try:
         # Usage accounting is best-effort: it must never break or delay the stream.
         text = b"".join(chunks).decode("utf-8", errors="replace")
-        tokens = _stream_usage(text, protocol)
+        tokens = _stream_usage(text, "openai" if translate else protocol)
         if tokens is not None:
             usage.record_usage(
                 ctx.workspace_id,
@@ -260,13 +288,18 @@ async def _forward_stream(
     model: str,
     request_id: int,
     protocol: str,
+    *,
+    translate: bool = False,
 ) -> StreamingResponse:
-    if protocol == "openai":
+    if protocol == "openai" or translate:
         # OpenAI streams only carry usage when explicitly requested.
         stream_options = body.get("stream_options")
         merged = dict(stream_options) if isinstance(stream_options, dict) else {}
         merged["include_usage"] = True
         body["stream_options"] = merged
+    if translate:
+        body = anthropic_translate.request_to_openai(body)
+        body["stream_options"] = {"include_usage": True}
     client = httpx.AsyncClient(timeout=_TIMEOUT)
     stream_ctx = client.stream("POST", url, json=body)
     try:
@@ -285,7 +318,8 @@ async def _forward_stream(
         ) from exc
     return StreamingResponse(
         _stream_with_accounting(
-            client, stream_ctx, upstream, ctx, model, request_id, protocol
+            client, stream_ctx, upstream, ctx, model, request_id, protocol,
+            translate=translate,
         ),
         status_code=upstream.status_code,
         media_type="text/event-stream",
@@ -307,13 +341,22 @@ async def _forward(
             live.end(request_id)
             raise
         url = f"{base_url}/{endpoint}"
+        # Engines without native /v1/messages (llama-cpp-python pip mode) get
+        # Anthropic<->OpenAI translation; native engines pass through.
+        translate = protocol == "anthropic" and not _native_anthropic(model_ref)
+        if translate:
+            url = f"{base_url}/chat/completions"
         # count_tokens never streams; /messages and the OpenAI endpoints do.
         is_streamable = endpoint in ("messages", "chat/completions", "completions")
         wants_stream = bool(body.get("stream")) if body.get("stream") is not None else False
         if wants_stream and is_streamable:
-            return await _forward_stream(url, body, ctx, model_name, request_id, protocol)
+            return await _forward_stream(
+                url, body, ctx, model_name, request_id, protocol, translate=translate
+            )
         try:
-            return await _forward_nonstream(url, body, ctx, model_name, protocol)
+            return await _forward_nonstream(
+                url, body, ctx, model_name, protocol, translate=translate
+            )
         finally:
             live.end(request_id)
     except HTTPException:

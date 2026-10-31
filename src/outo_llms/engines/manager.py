@@ -280,6 +280,15 @@ class EngineManager:
             return LlamaCppAdapter(binary=True)
         return get_adapter(instance.type)
 
+    def supports_anthropic(self, model: ModelRef) -> bool:
+        """Whether the engine serving ``model`` speaks /v1/messages natively.
+
+        llama-server (binary) and vLLM/SGLang do; llama-cpp-python (pip mode)
+        does not, so the proxy must translate Anthropic<->OpenAI there.
+        """
+        name = self._engine_for(model)
+        return bool(self._adapter_for(name).supports_anthropic)
+
     def _engine_for(self, model: ModelRef) -> str:
         """The instance serving ``model``: its pin, or the default engine."""
         return model.engine if model.engine else self.current_name()

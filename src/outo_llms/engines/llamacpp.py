@@ -31,6 +31,10 @@ class LlamaCppAdapter(EngineAdapter):
 
     def __init__(self, *, binary: bool = False) -> None:
         self.binary = binary
+        # llama-server (binary mode) serves /v1/messages natively;
+        # llama-cpp-python's FastAPI server does not, so it needs the
+        # proxy's Anthropic<->OpenAI translation layer.
+        self.supports_anthropic = binary
         self.pip_requirements = (
             ["huggingface-hub>=0.24"]
             if binary
